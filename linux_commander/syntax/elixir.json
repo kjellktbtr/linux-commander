@@ -1,0 +1,142 @@
+{
+    "name": "Elixir",
+    "extensions": [
+        ".ex",
+        ".exs"
+    ],
+    "case_sensitive": true,
+    "keywords": {
+        "true": "#569cd6",
+        "false": "#569cd6",
+        "nil": "#569cd6",
+        "when": "#569cd6",
+        "and": "#569cd6",
+        "or": "#569cd6",
+        "not": "#569cd6",
+        "in": "#569cd6",
+        "fn": "#569cd6",
+        "do": "#569cd6",
+        "end": "#569cd6",
+        "catch": "#569cd6",
+        "rescue": "#569cd6",
+        "after": "#569cd6",
+        "else": "#569cd6",
+        "alias": "#569cd6",
+        "require": "#569cd6",
+        "import": "#569cd6",
+        "use": "#569cd6",
+        "def": "#569cd6",
+        "defp": "#569cd6",
+        "defmacro": "#569cd6",
+        "defmacrop": "#569cd6",
+        "defmodule": "#569cd6",
+        "defprotocol": "#569cd6",
+        "defimpl": "#569cd6",
+        "defstruct": "#569cd6",
+        "defexception": "#569cd6",
+        "defdelegate": "#569cd6",
+        "defguard": "#569cd6",
+        "defguardp": "#569cd6",
+        "if": "#569cd6",
+        "unless": "#569cd6",
+        "case": "#569cd6",
+        "cond": "#569cd6",
+        "with": "#569cd6",
+        "for": "#569cd6",
+        "receive": "#569cd6",
+        "try": "#569cd6",
+        "raise": "#569cd6",
+        "throw": "#569cd6",
+        "spawn": "#569cd6",
+        "spawn_link": "#569cd6",
+        "spawn_monitor": "#569cd6",
+        "send": "#569cd6",
+        "receive": "#569cd6"
+    },
+    "builtins": {
+        "IO": "#4ec9b0",
+        "File": "#4ec9b0",
+        "String": "#4ec9b0",
+        "Integer": "#4ec9b0",
+        "Float": "#4ec9b0",
+        "List": "#4ec9b0",
+        "Map": "#4ec9b0",
+        "Enum": "#4ec9b0",
+        "Stream": "#4ec9b0",
+        "Range": "#4ec9b0",
+        "Keyword": "#4ec9b0",
+        "Date": "#4ec9b0",
+        "DateTime": "#4ec9b0",
+        "Time": "#4ec9b0",
+        "Regex": "#4ec9b0",
+        "Port": "#4ec9b0",
+        "Process": "#4ec9b0",
+        "Agent": "#4ec9b0",
+        "GenServer": "#4ec9b0",
+        "Supervisor": "#4ec9b0",
+        "Task": "#4ec9b0",
+        "Application": "#4ec9b0",
+        "Logger": "#4ec9b0",
+        "inspect": "#dcdcaa",
+        "IO.puts": "#dcdcaa",
+        "IO.gets": "#dcdcaa",
+        "Enum.map": "#dcdcaa",
+        "Enum.filter": "#dcdcaa",
+        "Enum.reduce": "#dcdcaa",
+        "List.first": "#dcdcaa",
+        "List.last": "#dcdcaa",
+        "Map.get": "#dcdcaa",
+        "Map.put": "#dcdcaa",
+        "Map.keys": "#dcdcaa",
+        "Map.values": "#dcdcaa"
+    },
+    "types": {
+        "atom": "#4ec9b0",
+        "binary": "#4ec9b0",
+        "bitstring": "#4ec9b0",
+        "boolean": "#4ec9b0",
+        "float": "#4ec9b0",
+        "function": "#4ec9b0",
+        "integer": "#4ec9b0",
+        "list": "#4ec9b0",
+        "map": "#4ec9b0",
+        "pid": "#4ec9b0",
+        "port": "#4ec9b0",
+        "reference": "#4ec9b0",
+        "tuple": "#4ec9b0"
+    },
+    "string_color": "#ce9178",
+    "comment_color": "#6a9955",
+    "number_color": "#b5cea8",
+    "line_comment": "#",
+    "patterns": [
+        {
+            "regex": "\\b0[xX][0-9a-fA-F]+\\b",
+            "color": "#b5cea8"
+        },
+        {
+            "regex": "\\b[0-9]+\\.?[0-9]*([eE][+-]?[0-9]+)?\\b",
+            "color": "#b5cea8"
+        },
+        {
+            "regex": "\"(\\\\.|[^\"\\\\])*\"",
+            "color": "#ce9178"
+        },
+        {
+            "regex": "~[a-z]?\"[^\"\\\\]*(\\\\[\\s\\S][^\"\\\\]*)*\"",
+            "color": "#ce9178"
+        },
+        {
+            "regex": "~[a-z]?'[^'\\\\]*(\\\\[\\s\\S][^'\\\\]*)*'",
+            "color": "#ce9178"
+        },
+        {
+            "regex": ":[a-zA-Z_][a-zA-Z0-9_]*",
+            "color": "#ce9178"
+        },
+        {
+            "regex": ":[a-zA-Z_][a-zA-Z0-9_]*[?!]",
+            "color": "#ce9178"
+        }
+    ]
+}

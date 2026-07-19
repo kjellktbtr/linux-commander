@@ -1,0 +1,15 @@
+{
+    "name": "JSON",
+    "extensions": [".json", ".jsonc"],
+    "case_sensitive": true,
+    "keywords": {
+        "true": "#569cd6",
+        "false": "#569cd6",
+        "null": "#569cd6"
+    },
+    "patterns": [
+        {"regex": "\"[^\"\\\\]*(?:\\\\.[^\"\\\\]*)*\"\\s*:", "color": "#9cdcfe", "multiline": false}
+    ],
+    "string_color": "#ce9178",
+    "number_color": "#b5cea8"
+}

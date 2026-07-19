@@ -1,0 +1,143 @@
+{
+    "name": "Erlang",
+    "extensions": [
+        ".erl",
+        ".hrl"
+    ],
+    "case_sensitive": true,
+    "keywords": {
+        "after": "#569cd6",
+        "and": "#569cd6",
+        "andalso": "#569cd6",
+        "band": "#569cd6",
+        "begin": "#569cd6",
+        "bnot": "#569cd6",
+        "bor": "#569cd6",
+        "bsl": "#569cd6",
+        "bsr": "#569cd6",
+        "bxor": "#569cd6",
+        "case": "#569cd6",
+        "catch": "#569cd6",
+        "cond": "#569cd6",
+        "div": "#569cd6",
+        "end": "#569cd6",
+        "fun": "#569cd6",
+        "if": "#569cd6",
+        "let": "#569cd6",
+        "not": "#569cd6",
+        "of": "#569cd6",
+        "or": "#569cd6",
+        "orelse": "#569cd6",
+        "receive": "#569cd6",
+        "rem": "#569cd6",
+        "try": "#569cd6",
+        "when": "#569cd6",
+        "xor": "#569cd6",
+        "module": "#569cd6",
+        "export": "#569cd6",
+        "import": "#569cd6",
+        "compile": "#569cd6",
+        "define": "#569cd6",
+        "undef": "#569cd6",
+        "ifdef": "#569cd6",
+        "ifndef": "#569cd6",
+        "else": "#569cd6",
+        "endif": "#569cd6",
+        "record": "#569cd6",
+        "type": "#569cd6",
+        "spec": "#569cd6",
+        "callback": "#569cd6",
+        "opaque": "#569cd6"
+    },
+    "builtins": {
+        "abs": "#dcdcaa",
+        "element": "#dcdcaa",
+        "hd": "#dcdcaa",
+        "length": "#dcdcaa",
+        "setelement": "#dcdcaa",
+        "size": "#dcdcaa",
+        "tl": "#dcdcaa",
+        "float": "#dcdcaa",
+        "integer_to_list": "#dcdcaa",
+        "list_to_integer": "#dcdcaa",
+        "atom_to_list": "#dcdcaa",
+        "list_to_atom": "#dcdcaa",
+        "binary_to_list": "#dcdcaa",
+        "list_to_binary": "#dcdcaa",
+        "binary_to_term": "#dcdcaa",
+        "term_to_binary": "#dcdcaa",
+        "binary_part": "#dcdcaa",
+        "binary_size": "#dcdcaa",
+        "bit_size": "#dcdcaa",
+        "byte_size": "#dcdcaa",
+        "make_ref": "#dcdcaa",
+        "make_tuple": "#dcdcaa",
+        "erlang:display": "#dcdcaa",
+        "spawn": "#dcdcaa",
+        "spawn_link": "#dcdcaa",
+        "spawn_monitor": "#dcdcaa",
+        "self": "#dcdcaa",
+        "send": "#dcdcaa",
+        "receive": "#dcdcaa",
+        "exit": "#dcdcaa",
+        "link": "#dcdcaa",
+        "unlink": "#dcdcaa",
+        "monitor": "#dcdcaa",
+        "demonitor": "#dcdcaa",
+        "process_info": "#dcdcaa",
+        "register": "#dcdcaa",
+        "unregister": "#dcdcaa",
+        "whereis": "#dcdcaa"
+    },
+    "types": {
+        "atom": "#4ec9b0",
+        "binary": "#4ec9b0",
+        "bitstring": "#4ec9b0",
+        "boolean": "#4ec9b0",
+        "float": "#4ec9b0",
+        "function": "#4ec9b0",
+        "integer": "#4ec9b0",
+        "list": "#4ec9b0",
+        "map": "#4ec9b0",
+        "pid": "#4ec9b0",
+        "port": "#4ec9b0",
+        "reference": "#4ec9b0",
+        "tuple": "#4ec9b0",
+        "any": "#4ec9b0",
+        "none": "#4ec9b0"
+    },
+    "string_color": "#ce9178",
+    "comment_color": "#6a9955",
+    "number_color": "#b5cea8",
+    "line_comment": "%",
+    "patterns": [
+        {
+            "regex": "\\b0[xX][0-9a-fA-F]+\\b",
+            "color": "#b5cea8"
+        },
+        {
+            "regex": "\\b0[bB][01]+\\b",
+            "color": "#b5cea8"
+        },
+        {
+            "regex": "\\b0[oO][0-7]+\\b",
+            "color": "#b5cea8"
+        },
+        {
+            "regex": "\\b[0-9]+\\.?[0-9]*([eE][+-]?[0-9]+)?\\b",
+            "color": "#b5cea8"
+        },
+        {
+            "regex": "\"(\\\\.|[^\"\\\\])*\"",
+            "color": "#ce9178"
+        },
+        {
+            "regex": "[a-z][a-zA-Z0-9_]*",
+            "color": "#ce9178"
+        },
+        {
+            "regex": "'(\\\\.|[^\\\\'])*'",
+            "color": "#ce9178"
+        }
+    ]
+}

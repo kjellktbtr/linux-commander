@@ -1,0 +1,14 @@
+{
+    "name": "Markdown",
+    "extensions": [".md", ".markdown"],
+    "case_sensitive": false,
+    "patterns": [
+        {"regex": "^#{1,6} .*$", "color": "#569cd6", "multiline": true},
+        {"regex": "\\*\\*[^*\\n]+\\*\\*", "color": "#dcdcaa", "multiline": false},
+        {"regex": "(?<!\\*)\\*(?!\\*)[^*\\n]+(?<!\\*)\\*(?!\\*)", "color": "#4ec9b0", "multiline": false},
+        {"regex": "`[^`\\n]+`", "color": "#ce9178", "multiline": false},
+        {"regex": "```[\\s\\S]*?```", "color": "#ce9178", "multiline": true, "dotall": true},
+        {"regex": "\\[[^\\]]+\\]\\([^)]+\\)", "color": "#4fc1ff", "multiline": false},
+        {"regex": "^>.*$", "color": "#6a9955", "multiline": true}
+    ]
+}

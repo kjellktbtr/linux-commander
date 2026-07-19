@@ -1,0 +1,103 @@
+{
+    "name": "Go",
+    "extensions": [
+        ".go"
+    ],
+    "case_sensitive": true,
+    "keywords": {
+        "break": "#569cd6",
+        "case": "#569cd6",
+        "chan": "#569cd6",
+        "const": "#569cd6",
+        "continue": "#569cd6",
+        "default": "#569cd6",
+        "defer": "#569cd6",
+        "else": "#569cd6",
+        "fallthrough": "#569cd6",
+        "for": "#569cd6",
+        "func": "#569cd6",
+        "go": "#569cd6",
+        "goto": "#569cd6",
+        "if": "#569cd6",
+        "import": "#569cd6",
+        "interface": "#569cd6",
+        "map": "#569cd6",
+        "package": "#569cd6",
+        "range": "#569cd6",
+        "return": "#569cd6",
+        "select": "#569cd6",
+        "struct": "#569cd6",
+        "switch": "#569cd6",
+        "type": "#569cd6",
+        "var": "#569cd6"
+    },
+    "builtins": {
+        "append": "#dcdcaa",
+        "cap": "#dcdcaa",
+        "close": "#dcdcaa",
+        "complex": "#dcdcaa",
+        "copy": "#dcdcaa",
+        "delete": "#dcdcaa",
+        "imag": "#dcdcaa",
+        "len": "#dcdcaa",
+        "make": "#dcdcaa",
+        "new": "#dcdcaa",
+        "panic": "#dcdcaa",
+        "print": "#dcdcaa",
+        "println": "#dcdcaa",
+        "real": "#dcdcaa",
+        "recover": "#dcdcaa",
+        "bool": "#4ec9b0",
+        "byte": "#4ec9b0",
+        "complex64": "#4ec9b0",
+        "complex128": "#4ec9b0",
+        "error": "#4ec9b0",
+        "float32": "#4ec9b0",
+        "float64": "#4ec9b0",
+        "int": "#4ec9b0",
+        "int8": "#4ec9b0",
+        "int16": "#4ec9b0",
+        "int32": "#4ec9b0",
+        "int64": "#4ec9b0",
+        "rune": "#4ec9b0",
+        "string": "#4ec9b0",
+        "uint": "#4ec9b0",
+        "uint8": "#4ec9b0",
+        "uint16": "#4ec9b0",
+        "uint32": "#4ec9b0",
+        "uint64": "#4ec9b0",
+        "uintptr": "#4ec9b0"
+    },
+    "string_color": "#ce9178",
+    "comment_color": "#6a9955",
+    "number_color": "#b5cea8",
+    "line_comment": "//",
+    "patterns": [
+        {
+            "regex": "\\b0[xX][0-9a-fA-F]+\\b",
+            "color": "#b5cea8"
+        },
+        {
+            "regex": "\\b0[oO][0-7]+\\b",
+            "color": "#b5cea8"
+        },
+        {
+            "regex": "\\b[0-9]+(\\.[0-9]+)?([eE][+-]?[0-9]+)?[i]?\\b",
+            "color": "#b5cea8"
+        },
+        {
+            "regex": "`[^`]*`",
+            "color": "#ce9178",
+            "multiline": true
+        },
+        {
+            "regex": "`[^`]*$",
+            "color": "#ce9178",
+            "multiline": true
+        },
+        {
+            "regex": "\"(\\\\.|[^\"\\\\])*\"",
+            "color": "#ce9178"
+        }
+    ]
+}

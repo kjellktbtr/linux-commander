@@ -1,0 +1,138 @@
+{
+    "name": "Scala",
+    "extensions": [
+        ".scala",
+        ".sc",
+        ".sbt"
+    ],
+    "case_sensitive": true,
+    "keywords": {
+        "abstract": "#569cd6",
+        "case": "#569cd6",
+        "catch": "#569cd6",
+        "class": "#569cd6",
+        "def": "#569cd6",
+        "do": "#569cd6",
+        "else": "#569cd6",
+        "extends": "#569cd6",
+        "false": "#569cd6",
+        "final": "#569cd6",
+        "finally": "#569cd6",
+        "for": "#569cd6",
+        "forSome": "#569cd6",
+        "if": "#569cd6",
+        "implicit": "#569cd6",
+        "import": "#569cd6",
+        "lazy": "#569cd6",
+        "macro": "#569cd6",
+        "match": "#569cd6",
+        "new": "#569cd6",
+        "null": "#569cd6",
+        "object": "#569cd6",
+        "override": "#569cd6",
+        "package": "#569cd6",
+        "private": "#569cd6",
+        "protected": "#569cd6",
+        "return": "#569cd6",
+        "sealed": "#569cd6",
+        "super": "#569cd6",
+        "this": "#569cd6",
+        "throw": "#569cd6",
+        "trait": "#569cd6",
+        "try": "#569cd6",
+        "true": "#569cd6",
+        "type": "#569cd6",
+        "val": "#569cd6",
+        "var": "#569cd6",
+        "while": "#569cd6",
+        "with": "#569cd6",
+        "yield": "#569cd6",
+        "_": "#569cd6",
+        ":": "#569cd6",
+        "=": "#569cd6",
+        "=>": "#569cd6",
+        "<-": "#569cd6",
+        "<:": "#569cd6",
+        "<%": "#569cd6",
+        ">": "#569cd6",
+        "#": "#569cd6",
+        "@": "#569cd6"
+    },
+    "builtins": {
+        "String": "#4ec9b0",
+        "Int": "#4ec9b0",
+        "Long": "#4ec9b0",
+        "Double": "#4ec9b0",
+        "Float": "#4ec9b0",
+        "Boolean": "#4ec9b0",
+        "Byte": "#4ec9b0",
+        "Short": "#4ec9b0",
+        "Char": "#4ec9b0",
+        "Unit": "#4ec9b0",
+        "Any": "#4ec9b0",
+        "AnyVal": "#4ec9b0",
+        "AnyRef": "#4ec9b0",
+        "Nothing": "#4ec9b0",
+        "Null": "#4ec9b0",
+        "Option": "#4ec9b0",
+        "Some": "#4ec9b0",
+        "None": "#569cd6",
+        "List": "#4ec9b0",
+        "Set": "#4ec9b0",
+        "Map": "#4ec9b0",
+        "Seq": "#4ec9b0",
+        "Vector": "#4ec9b0",
+        "Array": "#4ec9b0",
+        "Range": "#4ec9b0",
+        "Iterator": "#4ec9b0",
+        "Iterable": "#4ec9b0",
+        "Traversable": "#4ec9b0",
+        "Future": "#4ec9b0",
+        "Promise": "#4ec9b0",
+        "println": "#dcdcaa",
+        "print": "#dcdcaa",
+        "printf": "#dcdcaa",
+        "require": "#dcdcaa",
+        "assert": "#dcdcaa",
+        "main": "#dcdcaa"
+    },
+    "string_color": "#ce9178",
+    "comment_color": "#6a9955",
+    "number_color": "#b5cea8",
+    "line_comment": "//",
+    "patterns": [
+        {
+            "regex": "\\b0[xX][0-9a-fA-F]+[Ll]?\\b",
+            "color": "#b5cea8"
+        },
+        {
+            "regex": "\\b[0-9]+[Ll]?\\b",
+            "color": "#b5cea8"
+        },
+        {
+            "regex": "\\b[0-9]+\\.?[0-9]*([eE][+-]?[0-9]+)?[FfDd]?\\b",
+            "color": "#b5cea8"
+        },
+        {
+            "regex": "\"(\\\\.|[^\"\\\\])*\"",
+            "color": "#ce9178"
+        },
+        {
+            "regex": "\"\"\"[\\s\\S]*?\"\"\"",
+            "color": "#ce9178",
+            "multiline": true
+        },
+        {
+            "regex": "'(\\\\.|[^\\\\'])'",
+            "color": "#ce9178"
+        },
+        {
+            "regex": "`[^`]+`",
+            "color": "#ce9178"
+        },
+        {
+            "regex": "@[A-Za-z_][A-Za-z0-9_]*",
+            "color": "#dcdcaa"
+        }
+    ]
+}

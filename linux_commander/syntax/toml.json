@@ -1,0 +1,19 @@
+{
+    "name": "TOML",
+    "extensions": [".toml"],
+    "case_sensitive": false,
+    "line_comment": "#",
+    "keywords": {
+        "true": "#569cd6",
+        "false": "#569cd6",
+        "nan": "#569cd6",
+        "inf": "#569cd6"
+    },
+    "patterns": [
+        {"regex": "^\\[\\[?[^\\]]+\\]\\]?", "color": "#c586c0", "multiline": true},
+        {"regex": "^\\s*[\\w.-]+\\s*=", "color": "#9cdcfe", "multiline": true}
+    ],
+    "string_color": "#ce9178",
+    "number_color": "#b5cea8",
+    "comment_color": "#6a9955"
+}

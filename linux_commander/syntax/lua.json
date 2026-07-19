@@ -1,0 +1,101 @@
+{
+    "name": "Lua",
+    "extensions": [
+        ".lua"
+    ],
+    "case_sensitive": true,
+    "keywords": {
+        "and": "#569cd6",
+        "break": "#569cd6",
+        "do": "#569cd6",
+        "else": "#569cd6",
+        "elseif": "#569cd6",
+        "end": "#569cd6",
+        "false": "#569cd6",
+        "for": "#569cd6",
+        "function": "#569cd6",
+        "goto": "#569cd6",
+        "if": "#569cd6",
+        "in": "#569cd6",
+        "local": "#569cd6",
+        "nil": "#569cd6",
+        "not": "#569cd6",
+        "or": "#569cd6",
+        "repeat": "#569cd6",
+        "return": "#569cd6",
+        "then": "#569cd6",
+        "true": "#569cd6",
+        "until": "#569cd6",
+        "while": "#569cd6"
+    },
+    "builtins": {
+        "print": "#dcdcaa",
+        "assert": "#dcdcaa",
+        "error": "#dcdcaa",
+        "pairs": "#dcdcaa",
+        "ipairs": "#dcdcaa",
+        "next": "#dcdcaa",
+        "type": "#dcdcaa",
+        "tonumber": "#dcdcaa",
+        "tostring": "#dcdcaa",
+        "rawget": "#dcdcaa",
+        "rawset": "#dcdcaa",
+        "rawequal": "#dcdcaa",
+        "setmetatable": "#dcdcaa",
+        "getmetatable": "#dcdcaa",
+        "select": "#dcdcaa",
+        "pcall": "#dcdcaa",
+        "xpcall": "#dcdcaa",
+        "load": "#dcdcaa",
+        "loadfile": "#dcdcaa",
+        "dofile": "#dcdcaa",
+        "require": "#dcdcaa",
+        "module": "#dcdcaa",
+        "package": "#4ec9b0",
+        "string": "#4ec9b0",
+        "table": "#4ec9b0",
+        "math": "#4ec9b0",
+        "io": "#4ec9b0",
+        "os": "#4ec9b0",
+        "debug": "#4ec9b0",
+        "coroutine": "#4ec9b0",
+        "utf8": "#4ec9b0",
+        "_G": "#4ec9b0",
+        "_VERSION": "#4ec9b0",
+        "unpack": "#dcdcaa",
+        "setfenv": "#dcdcaa",
+        "getfenv": "#dcdcaa"
+    },
+    "string_color": "#ce9178",
+    "comment_color": "#6a9955",
+    "number_color": "#b5cea8",
+    "line_comment": "--",
+    "patterns": [
+        {
+            "regex": "\\b0[xX][0-9a-fA-F]+\\b",
+            "color": "#b5cea8"
+        },
+        {
+            "regex": "\\b[0-9]+\\.?[0-9]*([eE][+-]?[0-9]+)?\\b",
+            "color": "#b5cea8"
+        },
+        {
+            "regex": "\"(\\\\.|[^\"\\\\])*\"",
+            "color": "#ce9178"
+        },
+        {
+            "regex": "'(\\\\.|[^\\\\'])*'",
+            "color": "#ce9178"
+        },
+        {
+            "regex": "\\[=*\\[[\\s\\S]*?\\]=*\\]",
+            "color": "#ce9178",
+            "multiline": true
+        },
+        {
+            "regex": "--\\[=*\\[[\\s\\S]*?\\]=*\\]",
+            "color": "#6a9955",
+            "multiline": true
+        }
+    ]
+}

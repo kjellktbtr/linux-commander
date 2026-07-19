@@ -1,0 +1,151 @@
+{
+    "name": "Ruby",
+    "extensions": [
+        ".rb",
+        ".rbw",
+        ".rake",
+        ".gemspec",
+        ".ru"
+    ],
+    "case_sensitive": true,
+    "keywords": {
+        "_ENCODING_": "#569cd6",
+        "_LINE_": "#569cd6",
+        "_FILE_": "#569cd6",
+        "BEGIN": "#569cd6",
+        "END": "#569cd6",
+        "alias": "#569cd6",
+        "and": "#569cd6",
+        "begin": "#569cd6",
+        "break": "#569cd6",
+        "case": "#569cd6",
+        "class": "#569cd6",
+        "def": "#569cd6",
+        "defined?": "#569cd6",
+        "do": "#569cd6",
+        "else": "#569cd6",
+        "elsif": "#569cd6",
+        "end": "#569cd6",
+        "ensure": "#569cd6",
+        "false": "#569cd6",
+        "for": "#569cd6",
+        "if": "#569cd6",
+        "in": "#569cd6",
+        "module": "#569cd6",
+        "next": "#569cd6",
+        "nil": "#569cd6",
+        "not": "#569cd6",
+        "or": "#569cd6",
+        "redo": "#569cd6",
+        "rescue": "#569cd6",
+        "retry": "#569cd6",
+        "return": "#569cd6",
+        "self": "#569cd6",
+        "super": "#569cd6",
+        "then": "#569cd6",
+        "true": "#569cd6",
+        "undef": "#569cd6",
+        "unless": "#569cd6",
+        "until": "#569cd6",
+        "when": "#569cd6",
+        "while": "#569cd6",
+        "yield": "#569cd6"
+    },
+    "builtins": {
+        "Array": "#4ec9b0",
+        "Hash": "#4ec9b0",
+        "String": "#4ec9b0",
+        "Integer": "#4ec9b0",
+        "Float": "#4ec9b0",
+        "Symbol": "#4ec9b0",
+        "Range": "#4ec9b0",
+        "Regexp": "#4ec9b0",
+        "File": "#4ec9b0",
+        "Dir": "#4ec9b0",
+        "IO": "#4ec9b0",
+        "Time": "#4ec9b0",
+        "Date": "#4ec9b0",
+        "DateTime": "#4ec9b0",
+        "Object": "#4ec9b0",
+        "BasicObject": "#4ec9b0",
+        "Module": "#4ec9b0",
+        "Class": "#4ec9b0",
+        "Exception": "#4ec9b0",
+        "StandardError": "#4ec9b0",
+        "RuntimeError": "#4ec9b0",
+        "puts": "#dcdcaa",
+        "print": "#dcdcaa",
+        "p": "#dcdcaa",
+        "gets": "#dcdcaa",
+        "require": "#dcdcaa",
+        "require_relative": "#dcdcaa",
+        "load": "#dcdcaa",
+        "include": "#dcdcaa",
+        "extend": "#dcdcaa",
+        "attr_accessor": "#dcdcaa",
+        "attr_reader": "#dcdcaa",
+        "attr_writer": "#dcdcaa",
+        "private": "#569cd6",
+        "protected": "#569cd6",
+        "public": "#569cd6",
+        "lambda": "#dcdcaa",
+        "proc": "#dcdcaa",
+        "block_given?": "#dcdcaa",
+        "yield": "#dcdcaa",
+        "raise": "#dcdcaa",
+        "throw": "#dcdcaa",
+        "catch": "#dcdcaa",
+        "loop": "#dcdcaa",
+        "rand": "#dcdcaa",
+        "srand": "#dcdcaa",
+        "sleep": "#dcdcaa",
+        "exit": "#dcdcaa",
+        "abort": "#dcdcaa"
+    },
+    "string_color": "#ce9178",
+    "comment_color": "#6a9955",
+    "number_color": "#b5cea8",
+    "line_comment": "#",
+    "patterns": [
+        {
+            "regex": "\\b0[xX][0-9a-fA-F]+\\b",
+            "color": "#b5cea8"
+        },
+        {
+            "regex": "\\b0[bB][01]+\\b",
+            "color": "#b5cea8"
+        },
+        {
+            "regex": "\\b0[oO][0-7]+\\b",
+            "color": "#b5cea8"
+        },
+        {
+            "regex": "\\b[0-9]+\\.?[0-9]*([eE][+-]?[0-9]+)?\\b",
+            "color": "#b5cea8"
+        },
+        {
+            "regex": "\"(\\\\.|[^\"\\\\])*\"",
+            "color": "#ce9178"
+        },
+        {
+            "regex": "'(\\\\.|[^\\\\'])*'",
+            "color": "#ce9178"
+        },
+        {
+            "regex": "%[qQwWxr]?[^a-zA-Z0-9\\s][\\s\\S]*?[^a-zA-Z0-9\\s]",
+            "color": "#ce9178"
+        },
+        {
+            "regex": ":[a-zA-Z_][a-zA-Z0-9_]*",
+            "color": "#ce9178"
+        },
+        {
+            "regex": "@@?[a-zA-Z_][a-zA-Z0-9_]*",
+            "color": "#9cdcfe"
+        },
+        {
+            "regex": "\\$[a-zA-Z_][a-zA-Z0-9_]*",
+            "color": "#9cdcfe"
+        }
+    ]
+}
