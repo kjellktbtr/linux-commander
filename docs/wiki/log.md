@@ -1,5 +1,43 @@
 # Wiki Operation Log
 
+## 2026-07-22 — Containers plugin system wiki + lint
+
+Created `entities/containers.md` documenting the containers plugin system. Updated `entities/archiving.md` with containers plugin section. Updated `index.md` to list containers under Plugin Systems.
+
+## 2026-07-22 — Wiki update for SOLID plugin systems + lint
+
+Updated wiki to document the three new plugin systems created during SOLID refactoring (sort_criteria, codecs, conflict_strategies). Created 7 new entity pages, updated 6 existing pages, fixed 11 broken wikilinks, and ran full wiki lint.
+
+- **New entity pages** — `sort_criteria.md`, `codecs.md`, `conflict_strategies.md`, `fkey_bar.md`, `command_prompt.md`, `menu_bar.md`, `panel_loading.md`
+- **Updated pages** — `fs.md` (sort_criteria plugin system), `archiving.md` (codecs plugin system), `operations.md` (conflict_strategies plugin system), `settings.md` (auto-serialization), `vfs.md` (removed self-referential links), `search_engine.md` (removed broken link)
+- **Broken wikilinks fixed** — 11 broken references resolved (7 by creating pages, 4 by removing self-referential or non-critical links)
+- **Wiki lint** — 0 broken wikilinks, 0 orphan pages, 0 frontmatter issues. Results saved to `docs/outputs/lint-2026-07-22.md`.
+
+## 2026-07-22 — Conflict resolution for copy/move operations
+
+Added pre-scan conflict detection and batch resolution dialog for copy/move operations. When files already exist at the destination, a dialog appears before the operation starts, listing all conflicts with per-file resolution options (Replace, Skip, Replace if newer, Replace if different size, Compare). Apply to All checkbox propagates the first choice to all conflicts. COMPARE opens the diff viewer then skips the file.
+
+- **Conflict detection** (`operations.py`) — Added `ConflictInfo` dataclass (source/dest paths, sizes, mtimes), `ConflictResolution` enum, and `find_conflicts()` function that recursively pre-scans sources against destination.
+- **Conflict dialog** (`conflict_dialog.py`) — Modal dialog with scrollable conflict list, per-file combobox for resolution choice, Apply to All checkbox, double-click for details.
+- **Controller wiring** (`operations_controller.py`) — `_copy_or_move()` calls `find_conflicts()` before starting operation, shows dialog if conflicts found, resolves by deleting dest files (Replace/Newer/Size) or opening diff viewer (Compare).
+- **Tests** — 6 new tests in `test_operations.py` (find_conflicts, ConflictResolution enum, ConflictInfo dataclass). 505 tests pass.
+- Updated [[operations]] wiki page with conflict resolution section.
+
+## 2026-07-22 — SOLID refactoring (8 phases)
+
+Thorough restructuring of linux-commander to address SOLID principle violations across all five principles. 8 phases completed, all 489 tests pass, ruff/mypy clean.
+
+- **Phase 1 — Split FileSystem ABC (ISP + LSP)** (`vfs.py`) — Split `FileSystem` into `ReadableFileSystem(ABC)` + `WritableFileSystem(ABC)` mixins. Replaced `.writable` boolean checks with `isinstance(fs, WritableFileSystem)`. Fixed LSP violation in `list_dir_flat` (now returns `[]` instead of raising `NotImplementedError`). Updated all plugins: read-only plugins extend `ReadableFileSystem`, writable plugins extend `FileSystem`.
+- **Phase 2 — Fix Search Engine OCP/DIP** (`search_engine.py`) — Removed `isinstance(LocalFileSystem)` guard and `fs._to_path()` private call. Unified `walk_dir(Path)` and `_walk_vfs(VfsPath)` into single VFS-based `_walk_vfs()` walker. Added archive descent via `_try_archive_descent()` helper.
+- **Phase 3 — Extract SessionManager (SRP)** (`session_manager.py`) — Extracted save/restore of panel paths, marks, sort state, active side. Replaced `isinstance(panel.current_path.fs, LocalFileSystem)` with `fs.realpath()` check.
+- **Phase 4 — Extract Theme & Font Controllers (SRP)** (`theme_manager.py`, `font_manager.py`) — Moved all theme/font logic out of `CommanderApp`. Theme manager handles ttkbootstrap init, theme switching, theme picker dialog. Font manager handles applying font settings and font picker dialogs.
+- **Phase 5 — Extract OperationsController (SRP)** (`operations_controller.py`) — Moved all file operations (copy, move, delete, mkdir, compress, new file, file info) and refresh/error helpers into dedicated controller. Composed with `CommanderApp` via dependency injection.
+- **Phase 6 — Extract Search Mode from FilePanel (SRP)** (`search_mode.py`) — Created `SearchModeController` to manage search mode state: entering/exiting, accumulating results, re-rendering. Composed with `FilePanel` rather than inheriting from it.
+- **Phase 7 — Extract View Modes from TextWindow (SRP)** (`view_modes.py`) — Created `ViewMode(ABC)` base class and concrete implementations (`CsvMode`, `HexMode`, `StringsMode`, `JsonMode`). Strategy pattern for viewer display modes.
+- **Phase 8 — DIP Cleanup & Final Polish** (`credential_service.py`) — Created `CredentialService` singleton to replace global `_credential_provider`. Removed remaining `isinstance(LocalFileSystem)` checks outside `vfs.py`.
+- Updated [[vfs]], [[app]], [[search_engine]], [[viewer]], [[operations]] wiki pages with dated sections documenting the new architecture.
+- 489 tests pass, ruff clean, mypy clean (69 source files checked, up from 62 before refactoring).
+
 ## 2026-07-18 — SMB port default, real fix for Jottacloud deleted-item filtering, background operations, SVG viewer support
 
 Continued dogfooding turned up a real bug in the previous session's deleted-item fix (it filtered correctly but parsed the trigger condition wrong), plus three new asks.

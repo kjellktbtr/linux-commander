@@ -25,7 +25,7 @@ import io
 from pathlib import Path
 from typing import BinaryIO
 
-from linux_commander.vfs import FileEntry, FileSystem, StatResult, VfsPath
+from linux_commander.vfs import FileEntry, FileSystem, ReadableFileSystem, StatResult, VfsPath
 
 try:
     import libarchive  # type: ignore[import-untyped]
@@ -36,7 +36,7 @@ except ImportError:
     EXTENSIONS = ()
 
 
-class LibArchiveFileSystem(FileSystem):
+class LibArchiveFileSystem(ReadableFileSystem):
     """Read-only VFS backend for a libarchive-supported archive.
 
     ``parts`` encoding mirrors the other archive plugins:
@@ -150,7 +150,7 @@ class LibArchiveFileSystem(FileSystem):
         return io.BytesIO(data)
 
 
-def open_fs(host_fs: FileSystem, host_path: VfsPath) -> FileSystem:
+def open_fs(host_fs: FileSystem, host_path: VfsPath) -> ReadableFileSystem:
     """Mount ``host_path`` (materialized to a real file) as a LibArchiveFileSystem."""
     from linux_commander.plugins import materialize
 

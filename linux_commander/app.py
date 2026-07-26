@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import tkinter as tk
-import tkinter.font as tkfont
 from collections.abc import Callable
 from pathlib import Path
 from tkinter import ttk
@@ -16,18 +15,41 @@ try:
 except ImportError:
     _HAS_TTKBOOTSTRAP = False
 
-from linux_commander import dialogs, operations, platform_util, viewer, volumes
-from linux_commander.columns_dialog import show_columns_dialog
+from linux_commander import dialogs, operations, viewer, volumes
+from linux_commander.command_prompt import CommandPrompt
 from linux_commander.diff_viewer import compare_directories, show_diff_viewer
+from linux_commander.fkey_bar import FKeyBar
+from linux_commander.font_manager import (
+    apply_font_settings as _apply_font_settings_fn,
+)
+from linux_commander.font_manager import (
+    show_font_dialog as _show_font_dialog_fn,
+)
+from linux_commander.font_manager import (
+    show_font_picker as _show_font_picker_fn,
+)
 from linux_commander.fs import format_size
 from linux_commander.ftp_dialog import show_remote_connections
 from linux_commander.keys import F_KEY_SPECS, FKeySpec
-from linux_commander.operations import CancelPredicate, OperationError, ProgressCallback
+from linux_commander.operations_controller import OperationsController
 from linux_commander.panel import FilePanel
 from linux_commander.search_dialog import SearchDialog
 from linux_commander.search_engine import SearchCriteria
-from linux_commander.settings import StoredKey, load_settings, save_settings
-from linux_commander.vfs import FileEntry, LocalFileSystem, MountManager
+from linux_commander.session_manager import SessionManager
+from linux_commander.settings import StoredKey, load_settings
+from linux_commander.theme_manager import (
+    apply_theme as _apply_theme_fn,
+)
+from linux_commander.theme_manager import (
+    init_ttkbootstrap as _init_ttkbootstrap_fn,
+)
+from linux_commander.theme_manager import (
+    set_ttkbootstrap_available,
+)
+from linux_commander.theme_manager import (
+    show_theme_picker as _show_theme_picker_fn,
+)
+from linux_commander.vfs import FileEntry, LocalFileSystem, MountManager, WritableFileSystem
 
 if TYPE_CHECKING:
     from linux_commander.search_controller import SearchController
@@ -110,14 +132,24 @@ class CommanderApp(tk.Tk):
         self.title("linux-commander")
         self.geometry("1000x600")
 
+        # Register this root as the master for icon PhotoImage creation,
+        # so icons are tied to the correct Tk instance after destroy/recreate.
+        from linux_commander.icons import set_tk_master
+
+        set_tk_master(self)
+
         # Load settings early (font and icons come from settings)
         self._settings = load_settings()
 
+        # Tell theme_manager whether ttkbootstrap is available
+        set_ttkbootstrap_available(_HAS_TTKBOOTSTRAP)
+
         # Apply ttkbootstrap theme before any widgets are created
-        self._boot_style = self._init_ttkbootstrap()
+        self._boot_style = _init_ttkbootstrap_fn(self, self._settings)
 
         self._local_fs = LocalFileSystem()
         self._mount_manager = MountManager()
+        self._session_manager = SessionManager(self._settings, self._local_fs)
         self._search_controller: SearchController | None = None
 
         # Let the .crp VFS plugin prompt for a password/key when Enter is
@@ -170,6 +202,19 @@ class CommanderApp(tk.Tk):
         )
         self.right_panel.grid(row=0, column=1, sticky="nsew")
 
+        # Initialize operations controller after panels are created
+        self._ops = OperationsController(
+            self,
+            self._settings,
+            self._local_fs,
+            self._mount_manager,
+            self.left_panel,
+            self.right_panel,
+            lambda: self.active_panel,
+            self._other_panel,
+            self._update_status,
+        )
+
         self.status_var = tk.StringVar(value="")
         status_label = ttk.Label(
             self,
@@ -209,248 +254,27 @@ class CommanderApp(tk.Tk):
     # -- ttkbootstrap theme --------------------------------------------------
 
     def _init_ttkbootstrap(self):
-        if not _HAS_TTKBOOTSTRAP:
-            return None
-        try:
-            import ttkbootstrap as tb
-            from ttkbootstrap.window import apply_all_bindings
-
-            # ttkbootstrap.Style.theme_use() restyles every live widget it
-            # knows about via a global Publisher/subscriber registry that
-            # every ttk.Combobox auto-joins. Widgets are normally removed
-            # from that registry by a <Destroy> binding that
-            # ttkbootstrap.window.Window/Toplevel install automatically --
-            # but this app subclasses plain tk.Tk (not ttkbootstrap's
-            # Window), so that cleanup binding was never wired up. Every
-            # closed dialog containing a Combobox (compression dialog,
-            # connections manager, search dialog, the viewer's font
-            # picker, ...) left a stale widget reference behind, and the
-            # next theme_use() call crashed with `_tkinter.TclError: bad
-            # window path name` the moment it reached one. apply_all_bindings
-            # installs the same <Destroy>-triggered unsubscribe (plus a
-            # <Map> convenience binding) that Window's own __init__ sets up.
-            apply_all_bindings(self)
-
-            theme = self._settings.theme or "darkly"
-            return tb.Style(theme=theme)
-        except Exception:
-            return None
+        return _init_ttkbootstrap_fn(self, self._settings)
 
     def _apply_theme(self, theme_name: str) -> None:
         """Switch to *theme_name*, re-apply custom panel styles, then fonts."""
-        if self._boot_style is None:
-            return
-        self._settings.theme = theme_name
-        self._boot_style.theme_use(theme_name)
-        from linux_commander.panel import reset_style
-
-        reset_style()
-        self._apply_font_settings()
+        _apply_theme_fn(self._boot_style, theme_name, self._settings, self._apply_font_settings)
 
     def cmd_theme(self) -> None:
         """Theme picker: two columns (dark / light) with live preview."""
-        if self._boot_style is None:
-            dialogs.error(
-                self,
-                "ttkbootstrap is not installed.\n\nRun: pip install ttkbootstrap",
-                title="Theme",
-            )
-            return
-
-        # Classify themes as dark or light using ttkbootstrap's own metadata
-        all_themes = sorted(self._boot_style.theme_names())
-        dark: list[str] = []
-        light: list[str] = []
-        for name in all_themes:
-            try:
-                self._boot_style.theme_use(name)
-                t = self._boot_style.theme.type
-            except Exception:
-                t = "light"
-            (dark if t == "dark" else light).append(name)
-        # Restore current theme after the classification loop
-        self._boot_style.theme_use(self._settings.theme)
-
-        saved_theme = self._settings.theme
-
-        dialog = tk.Toplevel(self)
-        dialog.title("Theme")
-        dialog.transient(self)
-        dialog.resizable(False, False)
-
-        ttk.Label(dialog, text="Dark themes").grid(
-            row=0, column=0, padx=(12, 6), pady=(10, 2), sticky="w"
-        )
-        ttk.Label(dialog, text="Light themes").grid(
-            row=0, column=1, padx=(6, 12), pady=(10, 2), sticky="w"
-        )
-
-        dark_lb = tk.Listbox(
-            dialog,
-            selectmode="single",
-            activestyle="dotbox",
-            exportselection=False,
-            width=16,
-            height=max(len(dark), len(light)),
-        )
-        for t in dark:
-            dark_lb.insert(tk.END, t)
-        dark_lb.grid(row=1, column=0, padx=(12, 6), pady=(0, 8), sticky="ns")
-
-        light_lb = tk.Listbox(
-            dialog,
-            selectmode="single",
-            activestyle="dotbox",
-            exportselection=False,
-            width=16,
-            height=max(len(dark), len(light)),
-        )
-        for t in light:
-            light_lb.insert(tk.END, t)
-        light_lb.grid(row=1, column=1, padx=(6, 12), pady=(0, 8), sticky="ns")
-
-        def _pick_dark(event=None):
-            sel = dark_lb.curselection()
-            if not sel:
-                return
-            light_lb.selection_clear(0, tk.END)
-            self._apply_theme(dark[sel[0]])
-
-        def _pick_light(event=None):
-            sel = light_lb.curselection()
-            if not sel:
-                return
-            dark_lb.selection_clear(0, tk.END)
-            self._apply_theme(light[sel[0]])
-
-        dark_lb.bind("<<ListboxSelect>>", _pick_dark)
-        light_lb.bind("<<ListboxSelect>>", _pick_light)
-
-        # Pre-select the active theme
-        cur = self._settings.theme
-        if cur in dark:
-            idx = dark.index(cur)
-            dark_lb.selection_set(idx)
-            dark_lb.see(idx)
-        elif cur in light:
-            idx = light.index(cur)
-            light_lb.selection_set(idx)
-            light_lb.see(idx)
-
-        def _apply():
-            dialog.destroy()
-
-        def _cancel():
-            self._apply_theme(saved_theme)
-            dialog.destroy()
-
-        btn_frame = ttk.Frame(dialog)
-        btn_frame.grid(row=2, column=0, columnspan=2, pady=8)
-        ttk.Button(btn_frame, text="OK", command=_apply).pack(side="right", padx=4)
-        ttk.Button(btn_frame, text="Cancel", command=_cancel).pack(side="right", padx=4)
-
-        dialog.protocol("WM_DELETE_WINDOW", _cancel)
-        dialogs._center_over(dialog, self)
-        dialog.grab_set()
-        dialog.wait_window()
+        _show_theme_picker_fn(self, self._settings, self._apply_theme)
 
     # -- F-key bar -----------------------------------------------------------
 
     def _build_fkey_bar(self) -> None:
-        bar = ttk.Frame(self)
-        bar.grid(row=3, column=0, columnspan=2, sticky="ew")
-        for index, spec in enumerate(F_KEY_SPECS):
-            bar.columnconfigure(index, weight=1)
-            if spec is None:
-                ttk.Label(bar, text="").grid(row=0, column=index, sticky="ew")
-                continue
-            text = f"{spec.key} {spec.label}"
-            button = ttk.Button(
-                bar,
-                text=text,
-                style="FKey.TButton",
-                command=lambda s=spec: self._dispatch(s),  # type: ignore[misc]
-            )
-            button.grid(row=0, column=index, sticky="ew", padx=2, pady=2)
-        self._fkey_bar = bar
+        self._fkey_bar = FKeyBar(self, F_KEY_SPECS, self._dispatch)
 
     def _build_command_prompt(self) -> None:
-        """Build the command prompt bar at the bottom of the window."""
-        self._cmd_frame = ttk.Frame(self)
-        self._cmd_frame.grid(row=2, column=0, columnspan=2, sticky="ew")
-        self._cmd_frame.columnconfigure(1, weight=1)
-
-        # Prompt label
-        self._cmd_prompt_var = tk.StringVar(value="$")
-        prompt_label = ttk.Label(
-            self._cmd_frame,
-            textvariable=self._cmd_prompt_var,
-            anchor="w",
-            padding=(4, 2),
-            style="CmdPrompt.TLabel",
+        self._cmd_prompt = CommandPrompt(
+            self,
+            on_execute=self._execute_command,
+            on_focus_return=self._return_focus_to_panel,
         )
-        prompt_label.grid(row=0, column=0, sticky="w")
-
-        # Command entry
-        self._cmd_var = tk.StringVar()
-        self._cmd_entry = ttk.Entry(self._cmd_frame, textvariable=self._cmd_var, style="Cmd.TEntry")
-        self._cmd_entry.grid(row=0, column=1, sticky="ew", padx=(0, 4), pady=2)
-
-        # Command history
-        self._cmd_history: list[str] = []
-        self._cmd_history_index: int = -1
-
-        # Bind keys
-        self._cmd_entry.bind("<Return>", self._on_command_enter)
-        self._cmd_entry.bind("<Up>", self._on_command_history_up)
-        self._cmd_entry.bind("<Down>", self._on_command_history_down)
-        self._cmd_entry.bind("<Escape>", self._on_command_escape)
-
-    def _on_command_enter(self, event: tk.Event) -> str:
-        """Execute the command entered in the command prompt."""
-        cmd = self._cmd_var.get().strip()
-        if not cmd:
-            self.active_panel._tree.focus_set()
-            return "break"
-
-        # Add to history
-        if self._cmd_history and self._cmd_history[-1] == cmd:
-            self._cmd_history.pop()
-        self._cmd_history.append(cmd)
-        self._cmd_history_index = len(self._cmd_history)
-
-        # Clear entry and return focus to panel
-        self._cmd_var.set("")
-        self.active_panel._tree.focus_set()
-
-        # Execute command
-        self._execute_command(cmd)
-        return "break"
-
-    def _on_command_escape(self, event: tk.Event) -> str:
-        """Clear the command entry and return focus to the active panel."""
-        self._cmd_var.set("")
-        self.active_panel._tree.focus_set()
-        return "break"
-
-    def _on_command_history_up(self, event: tk.Event) -> str:
-        """Navigate up in command history."""
-        if not self._cmd_history:
-            return "break"
-        if self._cmd_history_index > 0:
-            self._cmd_history_index -= 1
-            self._cmd_var.set(self._cmd_history[self._cmd_history_index])
-        return "break"
-
-    def _on_command_history_down(self, event: tk.Event) -> str:
-        """Navigate down in command history."""
-        if not self._cmd_history or self._cmd_history_index >= len(self._cmd_history) - 1:
-            self._cmd_var.set("")
-            self._cmd_history_index = len(self._cmd_history)
-            return "break"
-        self._cmd_history_index += 1
-        self._cmd_var.set(self._cmd_history[self._cmd_history_index])
-        return "break"
 
     def _execute_command(self, cmd: str) -> None:
         """Execute a shell command in a terminal, in the active panel's directory."""
@@ -479,74 +303,8 @@ class CommanderApp(tk.Tk):
             self._show_error(f"Failed to execute command: {exc}")
 
     def _apply_font_settings(self) -> None:
-        """Apply font settings from self._settings to all styled widgets.
-
-        Everything goes through ``ttk.Style`` — direct ``.configure(font=...)``
-        on ttk widgets raises ``TclError: unknown option "-font"``.
-
-        Named Tk aliases such as "TkFixedFont" are NOT real family names; passing
-        them to ``tkfont.Font(family=...)`` silently resolves to the wrong family
-        (e.g. "Noto Sans" instead of "Noto Sans Mono").  We resolve them via
-        ``nametofont`` first.  The Font object is stored as ``self._panel_font``
-        to prevent Python from garbage-collecting it while Tk still references it.
-        """
-        family = self._settings.font_family
-        size = self._settings.font_size
-        _tk_aliases = (
-            "TkFixedFont",
-            "TkDefaultFont",
-            "TkTextFont",
-            "TkHeadingFont",
-            "TkCaptionFont",
-            "TkSmallCaptionFont",
-            "TkIconFont",
-            "TkTooltipFont",
-        )
-        if family in _tk_aliases:
-            base = tkfont.nametofont(family)
-            actual = base.actual()
-            family = actual["family"]
-            weight = actual.get("weight", "normal")
-        else:
-            weight = "normal"
-        # Store as instance attribute — tkfont.Font.__del__ deletes the Tk font
-        # resource, so a local variable that gets GC'd would break the style.
-        self._panel_font = tkfont.Font(family=family, size=size, weight=weight)
-        font = self._panel_font
-        row_h = font.metrics("linespace") + 4
-        style = ttk.Style()
-
-        # Panel Treeview — both active and inactive variants
-        for prefix in ("", "Active.", "Inactive."):
-            style.configure(f"{prefix}FilePanel.Treeview", font=font, rowheight=row_h, indent=2)
-            style.configure(f"{prefix}FilePanel.Treeview.Heading", font=font)
-
-        # Panel header labels
-        style.configure("PanelHeader.TLabel", font=font)
-        style.configure("ActivePanelHeader.TLabel", font=font)
-
-        # F-key bar and volume-bar buttons
-        style.configure("FKey.TButton", font=font)
-        style.configure("Volume.TButton", font=font)
-
-        # Status bar and command-prompt label
-        style.configure("Status.TLabel", font=font)
-        style.configure("CmdPrompt.TLabel", font=font)
-
-        # Command entry (keep monospace regardless of panel font)
-        fixed = tkfont.nametofont("TkFixedFont")
-        style.configure("Cmd.TEntry", font=fixed)
-
-        # Update the marked-tag bold font and reload each panel so that existing
-        # rows are re-inserted with the new rowheight (Treeview only applies
-        # rowheight to newly inserted rows, not to already-rendered ones).
-        for panel in (getattr(self, "left_panel", None), getattr(self, "right_panel", None)):
-            if panel is not None:
-                panel.update_font(font)
-                prev = panel.current_index()
-                panel.load(panel.current_path)
-                if prev is not None:
-                    panel.select_index(prev)
+        """Apply font settings from self._settings to all styled widgets."""
+        _apply_font_settings_fn(self, self._settings, self.left_panel, self.right_panel)
 
     def _on_close(self) -> None:
         """Handle window close: save settings and exit (no confirmation)."""
@@ -563,209 +321,21 @@ class CommanderApp(tk.Tk):
 
     def _save_settings(self) -> None:
         """Persist current settings to disk."""
-        s = self._settings
-        # Active side
-        s.active_side = "right" if self.active_panel is self.right_panel else "left"
-        # Per-panel state
-        for panel, path_attr, marks_attr, sk_attr, sr_attr, sh_attr in [
-            (
-                self.left_panel,
-                "left_path",
-                "left_marks",
-                "left_sort_key",
-                "left_sort_reverse",
-                "left_show_hidden",
-            ),
-            (
-                self.right_panel,
-                "right_path",
-                "right_marks",
-                "right_sort_key",
-                "right_sort_reverse",
-                "right_show_hidden",
-            ),
-        ]:
-            if isinstance(panel.current_path.fs, LocalFileSystem):
-                real = panel.current_path.fs._to_path(panel.current_path)
-                setattr(s, path_attr, str(real))
-                setattr(s, marks_attr, [e.name for e in panel.marked_entries()])
-            else:
-                # FTP / archive — not reliably restorable, skip
-                setattr(s, path_attr, "")
-                setattr(s, marks_attr, [])
-            setattr(s, sk_attr, panel.sort_key)
-            setattr(s, sr_attr, panel.sort_reverse)
-            setattr(s, sh_attr, panel.show_hidden)
-        # Legacy single-panel fields (kept for forward-compat)
-        s.show_hidden = self.active_panel.show_hidden
-        s.sort_key = self.active_panel.sort_key
-        s.sort_reverse = self.active_panel.sort_reverse
-        s.selection_patterns = self.active_panel._pattern_history
-        save_settings(s)
+        self._session_manager.save(self.left_panel, self.right_panel, self.active_panel)
 
     def _restore_session_state(self) -> None:
         """Restore per-panel paths, marks, sort, and active side from settings."""
-        s = self._settings
-        for panel, path_str, marks, sk, sr, sh in [
-            (
-                self.left_panel,
-                s.left_path,
-                s.left_marks,
-                s.left_sort_key,
-                s.left_sort_reverse,
-                s.left_show_hidden,
-            ),
-            (
-                self.right_panel,
-                s.right_path,
-                s.right_marks,
-                s.right_sort_key,
-                s.right_sort_reverse,
-                s.right_show_hidden,
-            ),
-        ]:
-            if path_str:
-                p = Path(path_str)
-                if p.is_dir():
-                    panel.sort_key = sk
-                    panel.sort_reverse = sr
-                    panel.show_hidden = sh
-                    panel.load(self._local_fs.from_path(p))
-                    # Re-mark saved entry names
-                    if marks:
-                        mark_set = set(marks)
-                        for entry in panel._entries:
-                            if not entry.is_parent and entry.name in mark_set:
-                                panel.marked.add(entry.path)
-                        panel._refresh_row_tags()
-                        panel._notify_marks_changed()
-        # Active side
-        if s.active_side == "right":
-            self.active_panel = self.right_panel
-            self._update_active_panel_style()
+        self._session_manager.restore(
+            self.left_panel,
+            self.right_panel,
+            lambda panel: setattr(self, "active_panel", panel),
+            self._update_active_panel_style,
+        )
 
     def _build_menu_bar(self) -> None:
-        menubar = tk.Menu(self)
-        self.config(menu=menubar)
+        from linux_commander.menu_bar import MenuBar
 
-        file_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="File", menu=file_menu, underline=0)
-        file_menu.add_command(label="Theme...", command=self.cmd_theme, underline=0)
-        file_menu.add_separator()
-        file_menu.add_command(label="Font...", command=self.cmd_font, underline=0)
-        file_menu.add_command(label="Editor Font...", command=self.cmd_editor_font, underline=0)
-        file_menu.add_command(label="Viewer Font...", command=self.cmd_viewer_font, underline=0)
-        file_menu.add_separator()
-        file_menu.add_command(label="Connections...", command=self.cmd_ftp_connections, underline=0)
-        file_menu.add_command(
-            label="Command Settings...", command=self.cmd_command_settings, underline=8
-        )
-        file_menu.add_command(
-            label="Optional Dependencies...",
-            command=self.cmd_optional_dependencies,
-            underline=0,
-        )
-        file_menu.add_command(label="Plugin Status...", command=self.cmd_plugin_status, underline=0)
-        file_menu.add_separator()
-        file_menu.add_command(
-            label="Command Prompt",
-            accelerator="Ctrl+X",
-            command=self._show_command_prompt,
-            underline=8,
-        )
-        file_menu.add_separator()
-        file_menu.add_command(
-            label="Quit", accelerator="Ctrl+Q", command=self.cmd_quit, underline=0
-        )
-
-        view_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="View", menu=view_menu, underline=0)
-        view_menu.add_command(
-            label="Show Hidden Files",
-            command=lambda: self.active_panel.toggle_hidden(),
-            underline=5,
-        )
-        view_menu.add_command(
-            label="Refresh",
-            command=lambda: self._refresh_panel_preserving_position(self.active_panel),
-            underline=0,
-        )
-        view_menu.add_separator()
-        view_menu.add_command(
-            label="Sort by Name",
-            command=lambda: self.active_panel.set_sort("name"),
-            underline=8,
-        )
-        view_menu.add_command(
-            label="Sort by Date",
-            command=lambda: self.active_panel.set_sort("mtime"),
-            underline=8,
-        )
-        view_menu.add_command(
-            label="Sort by Size",
-            command=lambda: self.active_panel.set_sort("size"),
-            underline=8,
-        )
-        view_menu.add_command(
-            label="Sort by Extension",
-            command=lambda: self.active_panel.set_sort("extension"),
-            underline=8,
-        )
-        view_menu.add_separator()
-        view_menu.add_command(label="Show Icons", command=self._toggle_icons, underline=5)
-        view_menu.add_command(
-            label="Show Extension Column", command=self._toggle_extension_column, underline=5
-        )
-        view_menu.add_command(label="Flat View", command=self._toggle_flat_view, underline=0)
-        view_menu.add_command(
-            label="Columns…",
-            command=lambda: show_columns_dialog(self, self.active_panel, self._other_panel()),
-            underline=0,
-        )
-        view_menu.add_separator()
-        view_menu.add_command(
-            label="Command Prompt",
-            accelerator="Ctrl+X",
-            command=self._show_command_prompt,
-            underline=8,
-        )
-
-        # Operations menu — populated from the self-registering file_ops registry
-        from linux_commander.file_ops import available_operations
-
-        ops = available_operations()
-        ops_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Operations", menu=ops_menu, underline=0)
-        # Hotlist commands
-        ops_menu.add_command(
-            label="Hotlist (Bookmarks)…",
-            accelerator="Ctrl+\\",
-            command=self._show_hotlist,
-            underline=0,
-        )
-        ops_menu.add_command(
-            label="Add Current Dir to Hotlist",
-            command=lambda: self.active_panel.add_current_dir_to_hotlist(),
-            underline=0,
-        )
-        ops_menu.add_separator()
-        # Compare commands
-        ops_menu.add_command(
-            label="Compare Files…",
-            command=self._compare_selected_files,
-            underline=0,
-        )
-        ops_menu.add_command(
-            label="Compare Directories…",
-            command=self._compare_directories,
-            underline=0,
-        )
-        ops_menu.add_separator()
-        for op in ops:
-            ops_menu.add_command(
-                label=op.name,
-                command=lambda _op=op: self._run_file_operation(_op),  # type: ignore[misc]
-            )
+        self.config(menu=MenuBar.build(self, self))
 
     def _run_file_operation(self, op: object) -> None:
         """Run a ``FileOperation`` on the active panel's selected files."""
@@ -779,7 +349,7 @@ class CommanderApp(tk.Tk):
             return
         sources = [e.path for e in entries]
         dest_dir = panel.current_path
-        if not dest_dir.fs.writable:
+        if not isinstance(dest_dir.fs, WritableFileSystem):
             dialogs.error(
                 self,
                 "The current directory is on a read-only filesystem.",
@@ -981,16 +551,16 @@ class CommanderApp(tk.Tk):
         state = int(event.state)  # type: ignore[arg-type]
         if state & 0x4 or state & 0x8:
             return None
-        self._cmd_entry.focus_set()
-        self._cmd_var.set(char)
-        self._cmd_entry.icursor(tk.END)
+        self._cmd_prompt.focus_and_set(char)
         return "break"
 
     def _show_command_prompt(self) -> None:
         """Focus the always-visible command prompt at the bottom."""
-        self._cmd_entry.focus_set()
-        self._cmd_var.set("")
-        self._cmd_history_index = len(self._cmd_history)
+        self._cmd_prompt.focus_and_clear()
+
+    def _return_focus_to_panel(self) -> None:
+        """Return focus to the active panel's tree."""
+        self.active_panel._tree.focus_set()
 
     def _dispatch(self, spec: FKeySpec) -> None:
         handler = getattr(self, spec.handler_name, None)
@@ -1124,36 +694,22 @@ class CommanderApp(tk.Tk):
             self.status_var.set("")
 
     def _on_activate_file(self, entry: FileEntry) -> None:
-        # Try the OS's default application first (requires a real OS path);
-        # fall back to the built-in viewer if no opener is available or failed.
-        real = entry.path.fs.realpath(entry.path)
-        if real is not None and platform_util.open_with_default_app(real):
-            return
-        viewer.view_file(self, entry.path)
+        self._ops._on_activate_file(entry)
 
     # -- refresh helpers -------------------------------------------------------
 
     def _refresh_panel_preserving_position(self, panel: FilePanel) -> None:
         """Reload `panel`'s current directory, keeping the cursor at the same
         row index if possible (a "sensible" row after copy/move/delete)."""
-        previous_index = panel.current_index()
-        panel.load(panel.current_path)
-        if previous_index is not None:
-            panel.select_index(previous_index)
+        self._ops._refresh_panel_preserving_position(panel)
 
     def _refresh_both_panels(self) -> None:
-        self._refresh_panel_preserving_position(self.left_panel)
-        self._refresh_panel_preserving_position(self.right_panel)
-        self._update_status()
+        self._ops._refresh_both_panels()
 
     def _report_errors(
         self, errors: list[operations.OperationError], verb: str = "Operation"
     ) -> None:
-        if not errors:
-            return
-        lines = [f"{err.path.name}: {err.message}" for err in errors]
-        message = f"{verb} completed with {len(errors)} error(s):\n\n" + "\n".join(lines)
-        dialogs.error(self, message, title=f"{verb} errors")
+        self._ops._report_errors(errors, verb)
 
     # -- F-key command handlers -----------------------------------------------
 
@@ -1202,7 +758,7 @@ class CommanderApp(tk.Tk):
         if entry is None or entry.is_parent or entry.is_dir:
             return
         panel = self.active_panel
-        if not entry.path.fs.writable:
+        if not isinstance(entry.path.fs, WritableFileSystem):
             viewer.view_file(self, entry.path, self._settings)
             return
         viewer.edit_file(
@@ -1214,76 +770,21 @@ class CommanderApp(tk.Tk):
 
     def cmd_file_info(self) -> None:
         """Show file type + checksums for the cursor file (Shift+F3)."""
-        entry = self.active_panel.cursor_entry()
-        if entry is None or entry.is_parent or entry.is_dir:
-            return
-        from linux_commander.file_info_dialog import show_file_info
-
-        show_file_info(self, entry.path, entry.size, entry.mtime)
+        self._ops.cmd_file_info()
 
     def cmd_new_file(self) -> None:
         """Shift+F4: create a new file in the active panel's directory and edit it."""
-        panel = self.active_panel
-        if not panel.current_path.fs.writable:
-            dialogs.error(
-                self, "Cannot create a file in a read-only filesystem.", title="New File failed"
-            )
-            return
-        name = dialogs.prompt(self, "New File", "New file name:")
-        if not name:
-            return
-        target = panel.current_path / name
-        real = panel.current_path.fs.realpath(target)
-        already_exists = real is not None and real.exists()
-        if not already_exists:
-            try:
-                operations.make_file(panel.current_path, name)
-            except OSError as exc:
-                dialogs.error(self, str(exc), title="New File failed")
-                return
-            panel.load(panel.current_path, select_name=name)
-            other = self._other_panel()
-            if other.current_path == panel.current_path:
-                self._refresh_panel_preserving_position(other)
-            self._update_status()
-        viewer.edit_file(
-            self,
-            target,
-            on_saved=lambda: self._refresh_panel_preserving_position(panel),
-            settings=self._settings,
-        )
+        self._ops.cmd_new_file()
 
     def cmd_copy(self) -> None:
-        self._copy_or_move(is_move=False)
+        self._ops.cmd_copy()
 
     def cmd_move(self) -> None:
-        self._copy_or_move(is_move=True)
+        self._ops.cmd_move()
 
     def cmd_compress(self) -> None:
         """Compress selected files to an archive (Shift+F5)."""
-        from linux_commander.archiving import compress_sources
-        from linux_commander.compression_dialog import CompressionDialog
-
-        panel = self.active_panel
-        entries = panel.selected_entries()
-        if not entries:
-            dialogs.error(self, "No files selected for compression.", title="Compress")
-            return
-        sources = [entry.path for entry in entries]
-
-        dialog = CompressionDialog(self, panel.current_path, sources)
-        if dialog.result:
-            archive_path, fmt, options = dialog.result
-            local_fs = self._local_fs
-
-            def work(on_progress, should_cancel):
-                return compress_sources(
-                    sources, archive_path, fmt, options, local_fs, on_progress, should_cancel
-                )
-
-            errors = dialogs.run_with_progress(self, "Compressing...", work)
-            self._refresh_both_panels()
-            self._report_errors(errors, "Compress")
+        self._ops.cmd_compress()
 
     # -- Search ---------------------------------------------------------------
 
@@ -1312,125 +813,11 @@ class CommanderApp(tk.Tk):
 
     # -- copy/move ------------------------------------------------------------
 
-    def _copy_or_move(self, is_move: bool) -> None:
-        panel = self.active_panel
-        entries = panel.selected_entries()
-        if not entries:
-            return
-        sources = [entry.path for entry in entries]
-        verb = "Move" if is_move else "Copy"
-
-        other_base = self._other_panel().current_path
-        default_dest = str(other_base)
-        dest_text = dialogs.prompt(
-            self, verb, f"{verb} {len(sources)} item(s) to:", initial=default_dest
-        )
-        if not dest_text:
-            return
-
-        # A single source and a bare filename (no directory component) typed
-        # as the destination means "rename in place", not "move" — this never
-        # touches the other panel's filesystem, so handle it before resolving
-        # a cross-panel destination below.
-        if is_move and len(sources) == 1 and "/" not in dest_text:
-            source = sources[0]
-            if not source.fs.writable:
-                dialogs.error(
-                    self, "Cannot rename: source filesystem is read-only.", title="Rename failed"
-                )
-                return
-            try:
-                operations.rename_entry(source, dest_text)
-            except OSError as exc:
-                dialogs.error(self, str(exc), title="Rename failed")
-            self._refresh_both_panels()
-            return
-
-        # Resolve against the OTHER panel's filesystem (which may be local,
-        # remote, or an archive mount) so the destination keeps its own
-        # backend instead of being coerced into a local path.
-        dest_path = operations.resolve_dest_path(other_base, dest_text)
-
-        if not dest_path.fs.writable:
-            dialogs.error(self, "Destination filesystem is read-only.", title=f"{verb} failed")
-            return
-
-        # If moving from a read-only source, warn that only a copy will happen.
-        if is_move and any(not s.fs.writable for s in sources):
-            if not dialogs.confirm(
-                self,
-                "The source filesystem is read-only.\n"
-                "Items will be copied but not removed from the source.\n\n"
-                "Proceed with copy?",
-                title="Move -> Copy only",
-            ):
-                return
-
-        op_func = operations.move_entries if is_move else operations.copy_entries
-
-        def work(
-            on_progress: ProgressCallback, should_cancel: CancelPredicate
-        ) -> list[OperationError]:
-            return op_func(sources, dest_path, on_progress=on_progress, should_cancel=should_cancel)
-
-        errors = dialogs.run_with_progress(self, f"{verb}ing...", work)
-        self._refresh_both_panels()
-        self._report_errors(errors, verb)
-
     def cmd_mkdir(self) -> None:
-        panel = self.active_panel
-        if not panel.current_path.fs.writable:
-            dialogs.error(
-                self, "Cannot create a directory in a read-only filesystem.", title="MkDir failed"
-            )
-            return
-        name = dialogs.prompt(self, "Make Directory", "New directory name:")
-        if not name:
-            return
-        try:
-            operations.make_directory(panel.current_path, name)
-        except OSError as exc:
-            dialogs.error(self, str(exc), title="MkDir failed")
-            return
-        panel.load(panel.current_path, select_name=name)
-        other = self._other_panel()
-        if other.current_path == panel.current_path:
-            self._refresh_panel_preserving_position(other)
-        self._update_status()
+        self._ops.cmd_mkdir()
 
     def cmd_delete(self) -> None:
-        panel = self.active_panel
-        entries = panel.selected_entries()
-        if not entries:
-            return
-        read_only = [e for e in entries if not e.path.fs.writable]
-        if read_only:
-            names = ", ".join(e.name for e in read_only[:5])
-            dialogs.error(
-                self,
-                f"Cannot delete from a read-only filesystem:\n{names}",
-                title="Delete failed",
-            )
-            return
-        preview = ", ".join(entry.name for entry in entries[:5])
-        if len(entries) > 5:
-            preview += f", and {len(entries) - 5} more"
-        if not dialogs.confirm(
-            self, f"Delete {len(entries)} item(s)?\n\n{preview}", title="Confirm delete"
-        ):
-            return
-        paths = [entry.path for entry in entries]
-
-        def work(
-            on_progress: ProgressCallback, should_cancel: CancelPredicate
-        ) -> list[OperationError]:
-            return operations.delete_entries(
-                paths, on_progress=on_progress, should_cancel=should_cancel
-            )
-
-        errors = dialogs.run_with_progress(self, "Deleting...", work)
-        self._refresh_both_panels()
-        self._report_errors(errors, "Delete")
+        self._ops.cmd_delete()
 
     def cmd_menu(self) -> None:
         menu = tk.Menu(self, tearoff=False)
@@ -1454,132 +841,19 @@ class CommanderApp(tk.Tk):
 
     def cmd_font(self) -> None:
         """Font selection dialog for the main application panels (live preview)."""
-        families = sorted(tkfont.families())
-        mono_families = [
-            f
-            for f in families
-            if "mono" in f.lower() or "courier" in f.lower() or "console" in f.lower()
-        ]
-        if mono_families:
-            families = mono_families + [f for f in families if f not in mono_families]
-
-        dialog = tk.Toplevel(self)
-        dialog.title("Font")
-        dialog.transient(self)
-        dialog.resizable(False, False)
-
-        ttk.Label(dialog, text="Font:").grid(row=0, column=0, padx=8, pady=8, sticky="w")
-        font_var = tk.StringVar(value=self._settings.font_family)
-        font_combo = ttk.Combobox(
-            dialog, textvariable=font_var, values=families, state="readonly", width=30
-        )
-        font_combo.grid(row=0, column=1, padx=8, pady=8)
-
-        ttk.Label(dialog, text="Size:").grid(row=1, column=0, padx=8, pady=8, sticky="w")
-        size_var = tk.IntVar(value=self._settings.font_size)
-        size_spin = ttk.Spinbox(dialog, from_=8, to=72, textvariable=size_var, width=5)
-        size_spin.grid(row=1, column=1, padx=8, pady=8, sticky="w")
-
-        # Snapshot for Cancel restore
-        _saved_family = self._settings.font_family
-        _saved_size = self._settings.font_size
-
-        def preview(*_) -> None:
-            fam = font_var.get()
-            if not fam:
-                return
-            try:
-                sz = int(size_var.get())
-            except (ValueError, tk.TclError):
-                return
-            self._settings.font_family = fam
-            self._settings.font_size = sz
-            self._apply_font_settings()
-
-        def apply_font() -> None:
-            preview()
-            dialog.destroy()
-
-        def cancel_font() -> None:
-            self._settings.font_family = _saved_family
-            self._settings.font_size = _saved_size
-            self._apply_font_settings()
-            dialog.destroy()
-
-        font_combo.bind("<<ComboboxSelected>>", preview)
-        size_spin.configure(command=preview)
-        size_spin.bind("<KeyRelease>", preview)
-
-        btn_frame = ttk.Frame(dialog)
-        btn_frame.grid(row=2, column=0, columnspan=2, pady=8)
-        ttk.Button(btn_frame, text="OK", command=apply_font).pack(side="right", padx=4)
-        ttk.Button(btn_frame, text="Cancel", command=cancel_font).pack(side="right", padx=4)
-
-        dialog.protocol("WM_DELETE_WINDOW", cancel_font)
-        dialogs._center_over(dialog, self)
-        dialog.grab_set()
-        font_combo.focus_set()
-        dialog.wait_window()
-
-    def _font_dialog(self, title: str, family_attr: str, size_attr: str) -> None:
-        """Generic font selection dialog for editor/viewer (apply-on-OK, cancel restores)."""
-        families = sorted(tkfont.families())
-        mono_families = [
-            f
-            for f in families
-            if "mono" in f.lower() or "courier" in f.lower() or "console" in f.lower()
-        ]
-        if mono_families:
-            families = mono_families + [f for f in families if f not in mono_families]
-
-        dialog = tk.Toplevel(self)
-        dialog.title(title)
-        dialog.transient(self)
-        dialog.resizable(False, False)
-
-        ttk.Label(dialog, text="Font:").grid(row=0, column=0, padx=8, pady=8, sticky="w")
-        font_var = tk.StringVar(value=getattr(self._settings, family_attr))
-        font_combo = ttk.Combobox(
-            dialog, textvariable=font_var, values=families, state="readonly", width=30
-        )
-        font_combo.grid(row=0, column=1, padx=8, pady=8)
-
-        ttk.Label(dialog, text="Size:").grid(row=1, column=0, padx=8, pady=8, sticky="w")
-        size_var = tk.IntVar(value=getattr(self._settings, size_attr))
-        size_spin = ttk.Spinbox(dialog, from_=8, to=72, textvariable=size_var, width=5)
-        size_spin.grid(row=1, column=1, padx=8, pady=8, sticky="w")
-
-        _saved_family = getattr(self._settings, family_attr)
-        _saved_size = getattr(self._settings, size_attr)
-
-        def apply_font() -> None:
-            setattr(self._settings, family_attr, font_var.get())
-            setattr(self._settings, size_attr, size_var.get())
-            dialog.destroy()
-
-        def cancel_font() -> None:
-            setattr(self._settings, family_attr, _saved_family)
-            setattr(self._settings, size_attr, _saved_size)
-            dialog.destroy()
-
-        btn_frame = ttk.Frame(dialog)
-        btn_frame.grid(row=2, column=0, columnspan=2, pady=8)
-        ttk.Button(btn_frame, text="OK", command=apply_font).pack(side="right", padx=4)
-        ttk.Button(btn_frame, text="Cancel", command=cancel_font).pack(side="right", padx=4)
-
-        dialog.protocol("WM_DELETE_WINDOW", cancel_font)
-        dialogs._center_over(dialog, self)
-        dialog.grab_set()
-        font_combo.focus_set()
-        dialog.wait_window()
+        _show_font_picker_fn(self, self._settings, self._apply_font_settings)
 
     def cmd_editor_font(self) -> None:
         """Font selection dialog for the editor."""
-        self._font_dialog("Editor Font", "editor_font_family", "editor_font_size")
+        _show_font_dialog_fn(
+            self, self._settings, "Editor Font", "editor_font_family", "editor_font_size"
+        )
 
     def cmd_viewer_font(self) -> None:
         """Font selection dialog for the viewer."""
-        self._font_dialog("Viewer Font", "viewer_font_family", "viewer_font_size")
+        _show_font_dialog_fn(
+            self, self._settings, "Viewer Font", "viewer_font_family", "viewer_font_size"
+        )
 
     # -- command settings dialog ---------------------------------------------
 
@@ -1633,5 +907,23 @@ class CommanderApp(tk.Tk):
 
 def main() -> None:
     """Entry point for the `linux-commander` script and `python -m linux_commander`."""
-    app = CommanderApp()
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="linux-commander",
+        description="A dual-pane orthodox file manager.",
+    )
+    parser.add_argument(
+        "paths",
+        nargs="*",
+        metavar="PATH",
+        help="Initial directory for the panels (left, right). "
+        "If only one path is given, the right panel uses the current directory.",
+    )
+    args = parser.parse_args()
+
+    left_path = Path(args.paths[0]) if len(args.paths) >= 1 else None
+    right_path = Path(args.paths[1]) if len(args.paths) >= 2 else None
+
+    app = CommanderApp(left_path=left_path, right_path=right_path)
     app.mainloop()

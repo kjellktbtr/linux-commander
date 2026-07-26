@@ -9,10 +9,8 @@ related:
   - "[[plugins]]"
   - "[[archiving]]"
   - "[[operations]]"
-  - "[[mount_manager]]"
-  - "[[local_fs]]"
 created: 2026-07-17
-updated: 2026-07-17
+updated: 2026-07-22
 confidence: high
 ---
 
@@ -20,33 +18,59 @@ confidence: high
 
 `linux_commander/vfs.py` is the **single filesystem abstraction** for the entire application. All I/O goes through `FileSystem` methods; never call methods directly on a `VfsPath`.
 
-## Core Types
+## SOLID Refactoring — Readable/Writable Split
 
-### `FileSystem` (ABC)
+The `FileSystem` ABC was split into two mixin interfaces following the **Interface Segregation Principle (ISP)** and **Liskov Substitution Principle (LSP)**:
+
+### `ReadableFileSystem(ABC)`
+
+Base interface for all filesystems. Abstract methods:
 
 ```python
-class FileSystem(ABC):
-    # Abstract — MUST implement
+class ReadableFileSystem(ABC):
     @abstractmethod
-    def list_dir(self, path: VfsPath) -> list[VfsPath]: ...
-    @abstractmethod
-    def list_dir_flat(self, path: VfsPath) -> list[VfsPath]: ...
+    def list_dir(self, path: VfsPath) -> list[FileEntry]: ...
     @abstractmethod
     def stat(self, path: VfsPath) -> FileStat: ...
     @abstractmethod
     def open_read(self, path: VfsPath) -> BinaryIO: ...
 
-    # Optional — override for writable backends
-    writable: ClassVar[bool] = False
-    def open_write(self, path: VfsPath, mode: str = "wb") -> BinaryIO: ...
-    def mkdir(self, path: VfsPath, parents: bool = False) -> None: ...
-    def delete(self, path: VfsPath) -> None: ...
-    def rename(self, src: VfsPath, dst: VfsPath) -> None: ...
-
-    # Optional helpers
-    def realpath(self, path: VfsPath) -> Path: ...  # real local path if backed by real file
-    def read_prefix(self, path: VfsPath, n: int) -> bytes: ...  # first N bytes (quick peek)
+    # Defaults — override if needed
+    def list_dir_flat(self, path: VfsPath) -> list[FileEntry]: ...  # returns [] by default
+    def realpath(self, path: VfsPath) -> Path | None: ...
+    def read_prefix(self, path: VfsPath, n: int) -> bytes: ...
+    def close(self) -> None: ...
 ```
+
+### `WritableFileSystem(ABC)`
+
+Mixin for writable backends. Abstract methods:
+
+```python
+class WritableFileSystem(ABC):
+    @abstractmethod
+    def open_write(self, path: VfsPath, mode: str = "wb") -> BinaryIO: ...
+    @abstractmethod
+    def mkdir(self, path: VfsPath, parents: bool = False) -> None: ...
+    @abstractmethod
+    def delete(self, path: VfsPath) -> None: ...
+    @abstractmethod
+    def rename(self, src: VfsPath, dst: VfsPath) -> None: ...
+```
+
+### `FileSystem(ReadableFileSystem, WritableFileSystem)`
+
+Convenience base combining both mixins. Sets `writable = True`. Used by `LocalFileSystem` and writable plugins (zip, tar, ftp, sftp, smb, webdav, jotta, sevenzip, grp).
+
+### Read-only plugins
+
+Extend `ReadableFileSystem` only: `rar_plugin`, `libarchive_plugin`, `compress_plugin`, `crypt_plugin`.
+
+### Checking writability
+
+Instead of checking a `.writable` boolean, code uses `isinstance(fs, WritableFileSystem)`. When write methods are called on a `VfsPath.fs`, the code casts: `cast(WritableFileSystem, path.fs)`.
+
+## Core Types
 
 ### `FileStat`
 
@@ -71,8 +95,8 @@ class FileStat:
 ```python
 @dataclass(frozen=True)
 class VfsPath:
-    fs: FileSystem        # owning filesystem
-    path: str             # path within that filesystem (POSIX-style, "/"-separated)
+    fs: ReadableFileSystem    # owning filesystem (broadened from FileSystem)
+    path: str                 # path within that filesystem (POSIX-style, "/"-separated)
     # Properties delegate to fs: .name, .parent, .exists(), .stat(), etc.
 ```
 
@@ -89,14 +113,14 @@ class VfsPath:
 
 ```python
 class MountManager:
-    def mount(self, host_fs: FileSystem, path: VfsPath) -> FileSystem:
+    def mount(self, host_fs: ReadableFileSystem, path: VfsPath) -> ReadableFileSystem:
         # Returns a shared backend; refcounted so both panels can browse same archive
-    def unmount(self, fs: FileSystem) -> None:
+    def release(self, fs: ReadableFileSystem) -> None:
         # Decrements refcount; destroys backend when count reaches 0
 ```
 
 - Keyed by `(host_fs, path)` — same archive opened in both panels shares one backend
-- Enter (Enter key) → `mount()`; Leave (Backspace/..) → `unmount()`
+- Enter (Enter key) → `mount()`; Leave (Backspace/..) → `release()`
 - Plugin's `open_fs(host_fs, path)` returns the backend FS; MountManager wraps it
 
 ## Plugin Integration
@@ -132,5 +156,3 @@ if dst_fs.writable:
 - [[plugins]] — how archive/protocol plugins register `open_fs` / `connect_fs`
 - [[archiving]] — compression dialog writes via VFS
 - [[operations]] — copy/move/delete use VFS methods
-- [[mount_manager]] — shared backend lifecycle
-- [[local_fs]] — LocalFileSystem implementation

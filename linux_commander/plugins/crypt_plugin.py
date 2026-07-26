@@ -41,7 +41,7 @@ from linux_commander.file_ops.crypt_op import (
     _decrypt_bytes,
     _derive_key,
 )
-from linux_commander.vfs import FileEntry, FileSystem, StatResult, VfsPath
+from linux_commander.vfs import FileEntry, FileSystem, ReadableFileSystem, StatResult, VfsPath
 
 EXTENSIONS: tuple[str, ...] = (".crp",) if _HAS_CRYPTO else ()
 
@@ -84,7 +84,7 @@ def _decrypt_blob(blob: bytes, password: str | None, key_bytes: bytes | None) ->
         raise OSError(f"Decryption failed (wrong password?): {exc}") from exc
 
 
-class CryptFileSystem(FileSystem):
+class CryptFileSystem(ReadableFileSystem):
     """Read-only VFS presenting a decrypted single (non-archive) file.
 
     Only used when the decrypted content's name doesn't match another
@@ -141,7 +141,7 @@ class CryptFileSystem(FileSystem):
         pass  # plaintext lives only in memory; nothing to release
 
 
-def open_fs(host_fs: FileSystem, host_path: VfsPath) -> FileSystem:
+def open_fs(host_fs: FileSystem, host_path: VfsPath) -> ReadableFileSystem:
     """Prompt for credentials, decrypt ``host_path``, and mount the result."""
     from linux_commander.plugins import (
         cleanup_temp,

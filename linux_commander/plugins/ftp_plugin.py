@@ -330,6 +330,17 @@ class FtpFileSystem(FileSystem):
         except ftplib.error_perm as exc:
             raise OSError(f"Cannot create directory '{ftp_path}': {exc}") from exc
 
+    def set_mtime(self, path: VfsPath, mtime: float) -> None:
+        import datetime
+
+        ftp_path = self._to_ftp_path(path)
+        try:
+            dt = datetime.datetime.fromtimestamp(mtime)
+            fmt = "%Y%m%d%H%M%S"
+            self._ftp.sendcmd(f"MDTM {dt.strftime(fmt)} {ftp_path}")
+        except (ftplib.error_perm, ftplib.error_temp, OSError):
+            pass
+
     def realpath(self, path: VfsPath) -> None:  # type: ignore[override]
         return None
 

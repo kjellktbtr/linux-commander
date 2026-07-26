@@ -93,33 +93,13 @@ def sort_entries(
     key: SortKey = "name",
     reverse: bool = False,
 ) -> list[FileEntry]:
-    """Sort entries with directories first and ``..`` always pinned at the top."""
+    """Sort entries with directories first and ``..`` always pinned at the top.
 
-    def sort_value(entry: FileEntry) -> tuple:
-        primary: int | float | str
-        match key:
-            case "size":
-                primary = entry.size
-            case "mtime":
-                primary = entry.mtime
-            case "extension":
-                primary = "" if entry.is_dir else split_extension(entry.name)
-            case _:
-                primary = entry.name.lower()
-        return (primary,)
+    Delegates to the plugin-based sort criteria system.
+    """
+    from linux_commander.sort_criteria import sort_entries as _plugin_sort
 
-    parent = [e for e in entries if e.is_parent]
-    dirs = sorted(
-        (e for e in entries if e.is_dir and not e.is_parent),
-        key=sort_value,
-        reverse=reverse,
-    )
-    files = sorted(
-        (e for e in entries if not e.is_dir and not e.is_parent),
-        key=sort_value,
-        reverse=reverse,
-    )
-    return parent + dirs + files
+    return _plugin_sort(entries, criterion_name=key, reverse=reverse)
 
 
 def format_size(num_bytes: int) -> str:

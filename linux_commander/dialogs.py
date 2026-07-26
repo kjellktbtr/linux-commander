@@ -61,6 +61,7 @@ def confirm(parent: tk.Misc, message: str, title: str = "Confirm") -> bool:
     yes_btn.pack(side="right", padx=8)
 
     top.bind("<Return>", lambda e: on_yes())
+    top.bind("<KP_Enter>", lambda e: on_yes())
     top.bind("<Escape>", lambda e: on_no())
     top.protocol("WM_DELETE_WINDOW", on_no)
 
@@ -102,6 +103,7 @@ def prompt(parent: tk.Misc, title: str, message: str, initial: str = "") -> str 
     ok_btn.pack(side="right", padx=8)
 
     top.bind("<Return>", lambda e: on_ok())
+    top.bind("<KP_Enter>", lambda e: on_ok())
     top.bind("<Escape>", lambda e: on_cancel())
     top.protocol("WM_DELETE_WINDOW", on_cancel)
 
@@ -127,6 +129,7 @@ def error(parent: tk.Misc, message: str, title: str = "Error") -> None:
     ok_btn.pack(pady=(0, 12))
 
     top.bind("<Return>", lambda e: on_ok())
+    top.bind("<KP_Enter>", lambda e: on_ok())
     top.bind("<Escape>", lambda e: on_ok())
     top.protocol("WM_DELETE_WINDOW", on_ok)
 
@@ -170,6 +173,7 @@ def choose_from_list(parent: tk.Misc, title: str, items: list[str]) -> int | Non
 
     listbox.bind("<Double-Button-1>", lambda e: on_ok())
     top.bind("<Return>", lambda e: on_ok())
+    top.bind("<KP_Enter>", lambda e: on_ok())
     top.bind("<Escape>", lambda e: on_cancel())
     top.protocol("WM_DELETE_WINDOW", on_cancel)
 
@@ -269,6 +273,7 @@ def pattern_dialog(
     ok_btn.pack(side="right", padx=8)
 
     top.bind("<Return>", lambda e: on_ok())
+    top.bind("<KP_Enter>", lambda e: on_ok())
     top.bind("<Escape>", lambda e: on_cancel())
     top.protocol("WM_DELETE_WINDOW", on_cancel)
 
@@ -393,6 +398,7 @@ def date_time_picker(
     ok_btn.pack(side="right", padx=8)
 
     top.bind("<Return>", lambda e: ok_btn.invoke())
+    top.bind("<KP_Enter>", lambda e: ok_btn.invoke())
     top.bind("<Escape>", lambda e: cancel_btn.invoke())
     top.protocol("WM_DELETE_WINDOW", cancel_btn.invoke)
 

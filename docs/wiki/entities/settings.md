@@ -9,7 +9,7 @@ related:
   - "[[ftp_dialog]]"
   - "[[operations]]"
 created: 2026-07-17
-updated: 2026-07-18
+updated: 2026-07-22
 confidence: high
 ---
 
@@ -65,6 +65,10 @@ def save_settings(settings: Settings) -> None: ...
 - Load: reads `settings.json`, merges with defaults (missing keys get defaults)
 - Save: atomic write via temp file + rename; `0o600` on Unix
 - Called on app startup (load) and on any settings change (save) — debounced in `app.py`
+
+### SOLID Refactoring — Auto-serialization (2026-07-22)
+
+Manual field-by-field `to_dict()`/`from_dict()` mapping was replaced with `dataclasses.asdict()` for serialization and `**kwargs` unpacking for deserialization. This eliminates boilerplate and prevents drift when new fields are added to the `Settings` dataclass.
 
 ## Key Management
 

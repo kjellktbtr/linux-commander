@@ -125,6 +125,9 @@ class SearchDialog:
         # Content tab
         self._create_content_tab()
 
+        # Default to Name tab
+        self.notebook.select(2)
+
         # Archive option
         arc_frame = ttk.Frame(main)
         arc_frame.pack(fill="x", pady=(4, 0))
@@ -590,13 +593,13 @@ class SearchDialog:
         engine_criteria = self.criteria.to_engine_criteria()
         summary = self.criteria.to_summary()
 
-        self.app.search_controller.start(
+        self.app._search_controller.start(
             engine_criteria, summary, self.app.active_panel, self._on_search_done
         )
 
     def _on_stop(self) -> None:
         """Cancel the running search and restore the Search button."""
-        self.app.search_controller.cancel()
+        self.app._search_controller.cancel()
         self._search_btn.config(text="Search", command=self._on_search)
         self.top.grab_set()
 
@@ -680,7 +683,8 @@ class SearchDialog:
         return int(num * multipliers[unit])
 
     def _on_cancel(self) -> None:
-        self._on_stop()
+        if self.app._search_controller is not None:
+            self._on_stop()
         self.top.destroy()
 
     def _on_reset(self) -> None:

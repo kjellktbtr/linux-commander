@@ -23,7 +23,7 @@ import io
 import lzma
 from typing import IO, BinaryIO
 
-from linux_commander.vfs import FileEntry, FileSystem, StatResult, VfsPath
+from linux_commander.vfs import FileEntry, FileSystem, ReadableFileSystem, StatResult, VfsPath
 
 # Probe for stdlib zstd support (Python 3.14+)
 try:
@@ -63,7 +63,7 @@ def _inner_name(archive_name: str) -> str:
     return archive_name
 
 
-class CompressFileSystem(FileSystem):
+class CompressFileSystem(ReadableFileSystem):
     """Read-only VFS presenting a single-file compressed archive as one-entry dir.
 
     ``parts`` encoding:

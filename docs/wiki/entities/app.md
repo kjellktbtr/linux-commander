@@ -3,6 +3,10 @@ title: app — CommanderApp (Main Application Shell)
 type: entity
 sources:
   - linux_commander/app.py
+  - linux_commander/session_manager.py
+  - linux_commander/theme_manager.py
+  - linux_commander/font_manager.py
+  - linux_commander/operations_controller.py
 related:
   - "[[panel]]"
   - "[[fs]]"
@@ -14,18 +18,27 @@ related:
   - "[[keys]]"
   - "[[readme-summary]]"
 created: 2026-07-14
-updated: 2026-07-18
+updated: 2026-07-22
 confidence: high
 ---
 
 # app — CommanderApp (Main Application Shell)
 
 ## Purpose
-Top-level `tk.Tk` subclass. Creates the dual-pane layout, F-key bar, status line, and wires all global key bindings and F-key handlers. The central coordinator of the application.
+Top-level `tk.Tk` subclass. Creates the dual-pane layout, F-key bar, status line, and wires all global key bindings and F-key handlers. After SOLID refactoring, `CommanderApp` delegates to extracted controllers for session management, theme/font handling, and file operations.
+
+## Extracted Controllers
+
+| Controller | Module | Responsibility |
+|------------|--------|----------------|
+| `SessionManager` | `session_manager.py` | Save/restore panel paths, marks, sort state, active side |
+| `ThemeManager` | `theme_manager.py` | ttkbootstrap init, theme switching, theme picker dialog |
+| `FontManager` | `font_manager.py` | Apply font settings, font picker dialogs |
+| `OperationsController` | `operations_controller.py` | Copy, move, delete, mkdir, compress, new file, file info |
 
 ## Class: `CommanderApp(tk.Tk)`
 
-os` data-first-attribute">### Construction
+### Construction
 ```python
 CommanderApp(left_path=None, right_path=None)
 ```
@@ -40,7 +53,7 @@ CommanderApp(left_path=None, right_path=None)
 
 ### Panel Callbacks
 Each `FilePanel` receives:
-- `on_activate_file` → `_on_activate_file`
+- `on_activate_file` → `_on_activate_file` (delegates to `OperationsController`)
 - `on_tab` → `_switch_active_panel`
 - `on_marks_changed` → `_update_status`
 - `on_directory_changed` → `_update_title`
@@ -65,22 +78,17 @@ Each `FilePanel` receives:
 | `cmd_help` | `dialogs.show_text` with `HELP_TEXT` cheat-sheet |
 | `cmd_view` | `viewer.view_file(self, cursor_entry.path)` for files; `active_panel.load()` for directories |
 | `cmd_edit` | `viewer.edit_file(self, cursor_entry.path, on_saved=refresh)` |
-| `cmd_copy` | `_copy_or_move(is_move=False)` |
-| `cmd_move` | `_copy_or_move(is_move=True)` |
-| `cmd_mkdir` | Prompt name → `operations.make_directory` → refresh |
-| `cmd_delete` | Confirm → `dialogs.run_with_progress(operations.delete_entries)` → refresh both |
+| `cmd_copy` | Delegates to `OperationsController.cmd_copy()` |
+| `cmd_move` | Delegates to `OperationsController.cmd_move()` |
+| `cmd_mkdir` | Delegates to `OperationsController.cmd_mkdir()` |
+| `cmd_delete` | Delegates to `OperationsController.cmd_delete()` |
+| `cmd_compress` | Delegates to `OperationsController.cmd_compress()` |
+| `cmd_new_file` | Delegates to `OperationsController.cmd_new_file()` |
+| `cmd_file_info` | Delegates to `OperationsController.cmd_file_info()` |
 | `cmd_menu` | Popup `tk.Menu` at pointer (placeholder disabled items) |
-| `cmd_font` | Font dialog for panel treeviews (family/size via ttk.Style) |
+| `cmd_font` | Delegates to `FontManager` |
+| `cmd_theme` | Delegates to `ThemeManager` |
 | `cmd_quit` | `dialogs.confirm` → `self.destroy()` |
-
-### `_copy_or_move(is_move)`
-- Gets `selected_entries()` from active panel (marked or cursor)
-- Prompts destination (default = other panel's path) via `dialogs.prompt`
-- Single source + bare filename → `operations.rename_entry` (rename in place)
-- Else → `operations.move_entries` or `copy_entries` on worker thread
-- Progress via `dialogs.run_with_progress` with cancel button
-- On completion: `_refresh_both_panels()` (clears marks via `panel.load()`)
-- Errors collected → `dialogs.error` summary
 
 ## Global Key Bindings (`_bind_global_keys`)
 

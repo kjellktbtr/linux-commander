@@ -7,9 +7,8 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 
-from linux_commander.vfs import FileEntry, LocalFileSystem, VfsPath
+from linux_commander.vfs import FileEntry, VfsPath
 
 
 def _get_plugin_for_name(name: str) -> object:
@@ -94,17 +93,6 @@ def search_files(
         on_done(0, 0)
         return
 
-    fs = criteria.root_path.fs
-    if not isinstance(fs, LocalFileSystem):
-        # For now, only support LocalFileSystem
-        on_done(0, 0)
-        return
-
-    root = fs._to_path(criteria.root_path)
-    if not root.is_dir():
-        on_done(0, 0)
-        return
-
     # Pre-compile patterns for efficiency
     name_regex = None
     if criteria.name_enabled and criteria.name_regex:
@@ -123,85 +111,18 @@ def search_files(
     total_found_ref = [0]
     total_scanned_ref = [0]
 
-    def walk_dir(dir_path: Path) -> None:
-        if should_cancel():
-            return
-
-        try:
-            entries = list(dir_path.iterdir())
-        except (OSError, PermissionError):
-            return
-
-        for entry in entries:
-            if should_cancel():
-                return
-
-            total_scanned_ref[0] += 1
-
-            if on_progress and total_scanned_ref[0] % 50 == 0:
-                on_progress(total_scanned_ref[0], 0, str(entry))
-
-            try:
-                if entry.is_dir():
-                    walk_dir(entry)
-                else:
-                    if _matches_criteria(
-                        entry,
-                        criteria,
-                        name_regex,
-                        content_regex,
-                        content_bytes,
-                    ):
-                        total_found_ref[0] += 1
-                        # Create VfsPath and FileEntry for the result
-                        vfs_path = fs.from_path(entry)
-                        stat = entry.stat()
-                        file_entry = FileEntry(
-                            path=vfs_path,
-                            name=entry.name,
-                            is_dir=False,
-                            is_parent=False,
-                            size=stat.st_size,
-                            mtime=stat.st_mtime,
-                        )
-                        on_found(
-                            SearchResult(
-                                entry=file_entry,
-                                match_info="content"
-                                if criteria.content_enabled
-                                else "name/size/date",
-                            )
-                        )
-
-                    # Optionally descend into archive files.
-                    if criteria.search_archives and not should_cancel():
-                        plugin = _get_plugin_for_name(entry.name)
-                        if plugin is not None and hasattr(plugin, "open_fs"):
-                            vfs_path = fs.from_path(entry)
-                            try:
-                                archive_fs = plugin.open_fs(fs, vfs_path)  # type: ignore[union-attr]
-                                try:
-                                    arc_root = VfsPath(fs=archive_fs, parts=("",))
-                                    _walk_vfs(
-                                        arc_root,
-                                        criteria,
-                                        name_regex,
-                                        content_regex,
-                                        content_bytes,
-                                        on_found,
-                                        should_cancel,
-                                        on_progress,
-                                        total_found_ref,
-                                        total_scanned_ref,
-                                    )
-                                finally:
-                                    archive_fs.close()
-                            except OSError:
-                                pass
-            except (OSError, PermissionError):
-                continue
-
-    walk_dir(root)
+    _walk_vfs(
+        criteria.root_path,
+        criteria,
+        name_regex,
+        content_regex,
+        content_bytes,
+        on_found,
+        should_cancel,
+        on_progress,
+        total_found_ref,
+        total_scanned_ref,
+    )
     on_done(total_found_ref[0], total_scanned_ref[0])
 
 
@@ -217,7 +138,7 @@ def _walk_vfs(
     total_found_ref: list[int],
     total_scanned_ref: list[int],
 ) -> None:
-    """Recursively search inside a VFS (e.g. an archive backend).
+    """Recursively search inside a VFS (e.g. an archive backend or local FS).
 
     ``total_found_ref`` and ``total_scanned_ref`` are single-element lists
     used as mutable int references so nested calls accumulate into the same
@@ -257,6 +178,22 @@ def _walk_vfs(
                         entry=entry,
                         match_info="content" if criteria.content_enabled else "name/size/date",
                     )
+                )
+
+            # Optionally descend into archive files.
+            if criteria.search_archives and not should_cancel():
+                _try_archive_descent(
+                    entry,
+                    vpath.fs,
+                    criteria,
+                    name_regex,
+                    content_regex,
+                    content_bytes,
+                    on_found,
+                    should_cancel,
+                    on_progress,
+                    total_found_ref,
+                    total_scanned_ref,
                 )
 
 
@@ -338,93 +275,43 @@ def _match_content_vfs(
         return False
 
 
-def _matches_criteria(
-    path: Path,
+def _try_archive_descent(
+    entry: FileEntry,
+    host_fs: object,
     criteria: SearchCriteria,
     name_regex: re.Pattern | None,
     content_regex: re.Pattern | None,
     content_bytes: bytes | None,
-) -> bool:
-    """Check if a file matches all enabled criteria."""
+    on_found: OnFoundCallback,
+    should_cancel: Callable[[], bool],
+    on_progress: OnProgressCallback | None,
+    total_found_ref: list[int],
+    total_scanned_ref: list[int],
+) -> None:
+    """Try to descend into an archive file during search."""
+    plugin = _get_plugin_for_name(entry.name)
+    if plugin is None or not hasattr(plugin, "open_fs"):
+        return
     try:
-        stat = path.stat()
-    except (OSError, PermissionError):
-        return False
-
-    # Size
-    if criteria.size_enabled:
-        size = stat.st_size
-        if criteria.size_min is not None and size < criteria.size_min:
-            return False
-        if criteria.size_max is not None and size > criteria.size_max:
-            return False
-
-    # Date (modification time)
-    if criteria.date_enabled:
-        mtime = datetime.fromtimestamp(stat.st_mtime)
-        if criteria.date_from is not None and mtime < criteria.date_from:
-            return False
-        if criteria.date_to is not None and mtime > criteria.date_to:
-            return False
-
-    # Name
-    if criteria.name_enabled:
-        if criteria.name_regex and name_regex:
-            if not name_regex.search(path.name):
-                return False
-        elif criteria.name_regex is False:
-            # Glob match
-            if criteria.name_case_sensitive:
-                if not fnmatch.fnmatch(path.name, criteria.name_pattern):
-                    return False
-            else:
-                if not fnmatch.fnmatch(path.name.lower(), criteria.name_pattern.lower()):
-                    return False
-
-    # Content - only check if all other criteria passed
-    if criteria.content_enabled:
-        if not _match_content(path, criteria, content_regex, content_bytes):
-            return False
-
-    return True
-
-
-def _match_content(
-    path: Path,
-    criteria: SearchCriteria,
-    content_regex: re.Pattern | None,
-    content_bytes: bytes | None,
-) -> bool:
-    """Check file content against pattern."""
-    try:
-        # Skip large files for content search
-        stat = path.stat()
-        if stat.st_size > criteria.max_content_file_size:
-            return False
-
-        if criteria.content_mode == "hex" and content_bytes:
-            with open(path, "rb") as f:
-                data = f.read(criteria.max_content_file_size)
-            return content_bytes in data
-        else:
-            # Text search
-            try:
-                with open(path, encoding="utf-8", errors="ignore") as f:
-                    content = f.read(criteria.max_content_file_size)
-            except (OSError, UnicodeDecodeError):
-                return False
-
-            if content_regex:
-                return content_regex.search(content) is not None
-            else:
-                # Plain string search
-                pattern = criteria.content_pattern
-                if not criteria.content_case_sensitive:
-                    pattern = pattern.lower()
-                    content = content.lower()
-                return pattern in content
-    except (OSError, PermissionError):
-        return False
+        archive_fs = plugin.open_fs(host_fs, entry.path)  # type: ignore[union-attr]
+        try:
+            arc_root = VfsPath(fs=archive_fs, parts=("",))
+            _walk_vfs(
+                arc_root,
+                criteria,
+                name_regex,
+                content_regex,
+                content_bytes,
+                on_found,
+                should_cancel,
+                on_progress,
+                total_found_ref,
+                total_scanned_ref,
+            )
+        finally:
+            archive_fs.close()
+    except OSError:
+        pass
 
 
 def _parse_hex_pattern(pattern: str) -> bytes:

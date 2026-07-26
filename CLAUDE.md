@@ -40,9 +40,16 @@ GUI behavior (`panel.py`, `app.py`, `dialogs.py`, `viewer.py`'s `Toplevel` windo
 linux_commander/
   app.py                  CommanderApp: dual-panel window, F-key bar, menu bar, key routing
   panel.py                FilePanel: one directory-listing pane (Treeview-backed)
+  fkey_bar.py             FKeyBar widget — F-key button row (extracted from app.py)
+  command_prompt.py       CommandPrompt widget — command entry bar with history
+  menu_bar.py             MenuBar builder with MenuCallbacks protocol
+  panel_loading.py        Panel loading helpers — tree population, entry formatting
+  sort_criteria/          Plugin-based sort criteria (name, size, mtime, extension)
+  codecs/                 Plugin-based compression codecs (none, gz, bz2, xz, zstd)
+  conflict_strategies/    Plugin-based conflict resolution (skip, replace, compare, etc.)
   fs.py                   Directory listing, sorting, size/date formatting
   operations.py           Copy/move/delete/mkdir/rename, with progress + error collection
-  file_ops/               Auto-discovered Operations-menu items (base64_op.py, crypt_op.py)
+  file_ops/               Auto-discovered Operations-menu items (base64_op.py, crypt_op.py, floppy_op.py)
   archiving.py            Compression: container x codec matrix, encryption-stage wrapping
   compression_dialog.py   Shift+F5 dialog (container/codec/level/encrypt-output)
   dialogs.py              Confirm/prompt/error/choose_from_list/pattern_dialog/ProgressDialog
@@ -56,6 +63,7 @@ linux_commander/
   search_controller.py    Wires search dialog to a panelized results panel
   ftp_dialog.py           Connections manager (FTP/SFTP sessions)
   vfs.py                  FileSystem ABC, VfsPath, LocalFileSystem, MountManager
+  fatfs.py                Pure-Python FAT12/FAT16 floppy image reader/writer
   plugins/                Auto-discovered VFS + viewer-reader plugins (see Plugin System)
   install_extras.py       Reports/installs optional-dependency extras
   volumes.py              Volume/drive enumeration (Linux /proc/mounts backend)
@@ -108,6 +116,16 @@ def read_document(host_fs: FileSystem, path: VfsPath) -> ViewDocument: ...
 
 Broken/unimportable plugin modules are silently skipped so one bad module can't block discovery of the rest. Compound extensions are matched longest-first (`.tar.gz` is tried before `.gz`), so a plugin registering `.tar.gz` takes priority over one registering plain `.gz` for a file named `archive.tar.gz`.
 
+### Additional plugin systems
+
+Beyond the VFS plugins above, three more auto-discovered plugin systems exist:
+
+**Sort criteria** (`linux_commander/sort_criteria/`): Each module exposes a `criterion_class` attribute subclassing `SortCriterion`. Provides `name`, `label`, and `key(entry)` to sort file entries. New criteria (permissions, owner, etc.) can be added by dropping a module in.
+
+**Compression codecs** (`linux_commander/codecs/`): Each module exposes a `codec_class` attribute subclassing `Codec`. Provides `name` and `compress(src, dst, level)`. New codecs (lz4, zstd, brotli) can be added without modifying core code.
+
+**Conflict resolution strategies** (`linux_commander/conflict_strategies/`): Each module exposes a `strategy_class` attribute subclassing `ConflictStrategy`. Provides `name`, `label`, and `should_delete(conflict, dest_fs)`. Custom strategies can be added by dropping a module in.
+
 ### Adding a new VFS archive/protocol plugin
 
 1. Create `linux_commander/plugins/<name>_plugin.py`.
@@ -139,6 +157,37 @@ These preview a binary document format (spreadsheet, word processor, etc.) in th
 3. Document previews are always opened read-only in the viewer, and F4 promotion is blocked — there's no way to save a generated table/text preview back over the original binary without corrupting it.
 4. Templates: `xlsx_plugin.py` (straightforward streaming read with `openpyxl`) and `pandas_plugin.py` (the pattern for a *heavy* optional dependency — probe with `importlib.util.find_spec` at discovery time instead of importing eagerly, then `import pandas` lazily inside `read_document`).
 5. Tests follow the same `pytest.importorskip` + real-fixture convention as VFS plugins.
+
+### Adding a new viewer mode plugin
+
+Viewer modes control how file content is displayed in the built-in viewer (hex dump,
+JSON pretty-print, CSV table, strings scan). They live in `linux_commander/viewer_modes/`
+and are auto-discovered at startup using the same `pkgutil.iter_modules` pattern as VFS
+plugins.
+
+1. Create `linux_commander/viewer_modes/<name>_mode.py`.
+2. Subclass `ViewerMode` from `linux_commander.viewer_modes` and expose it as `mode_class`:
+   ```python
+   from linux_commander.viewer_modes import ViewerContext, ViewerMode
+
+   class MyMode(ViewerMode):
+       name = "MyMode"
+       exclusive_group = "display"  # modes in same group are mutually exclusive
+
+       def can_activate(self, ctx: ViewerContext) -> bool: ...
+       def on_activate(self, ctx: ViewerContext) -> None: ...
+       def on_deactivate(self, ctx: ViewerContext) -> None: ...
+       def build_menu(self, ctx: ViewerContext, menu: tk.Menu) -> None: ...
+   ```
+3. The `ViewerContext` protocol provides access to the text widget, window, settings,
+   file path, raw content, and helper methods (`clear_text`, `insert_text`,
+   `set_title_suffix`, `apply_syntax_highlighting`, etc.).
+4. Modes manage their own Tk state (`tk.BooleanVar`, submenus) in `build_menu()`.
+5. Set `exclusive_group` to control mutual exclusion (e.g. `"display"` for hex/json/csv/strings).
+6. Add `tests/test_viewer_modes.py` tests for discovery.
+
+Templates: `hex_mode.py` (full-featured with submenu and background threads),
+`json_mode.py` (simple toggle).
 
 ### Adding a syntax-highlighting language
 

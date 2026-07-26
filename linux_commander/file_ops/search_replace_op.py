@@ -12,12 +12,12 @@ import re
 import tkinter as tk
 from dataclasses import dataclass
 from tkinter import ttk
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from linux_commander.dialogs import _center_over
 from linux_commander.file_ops import FileOperation
 from linux_commander.operations import CancelPredicate, OperationError, ProgressCallback
-from linux_commander.vfs import VfsPath
+from linux_commander.vfs import VfsPath, WritableFileSystem
 
 if TYPE_CHECKING:
     pass
@@ -153,14 +153,14 @@ def _replace_in_file(
     if create_backup:
         backup_path = path / (path.name + ".bak")
         try:
-            with backup_path.fs.open_write(backup_path) as f:
+            with cast(WritableFileSystem, backup_path.fs).open_write(backup_path) as f:
                 f.write(original_content.encode("utf-8"))
         except Exception as e:
             return 0, f"Backup creation failed: {e}"
 
     # Write modified content
     try:
-        with path.fs.open_write(path) as f:
+        with cast(WritableFileSystem, path.fs).open_write(path) as f:
             f.write(new_content.encode("utf-8"))
     except Exception as e:
         return 0, f"Write error: {e}"

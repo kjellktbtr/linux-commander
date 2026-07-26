@@ -16,15 +16,15 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from tkinter import ttk
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from linux_commander.dialogs import _center_over, error
 from linux_commander.file_ops import FileOperation
 from linux_commander.operations import CancelPredicate, OperationError, ProgressCallback
-from linux_commander.vfs import LocalFileSystem, VfsPath
+from linux_commander.vfs import LocalFileSystem, VfsPath, WritableFileSystem
 
 if TYPE_CHECKING:
-    from linux_commander.vfs import FileSystem
+    from linux_commander.vfs import ReadableFileSystem, WritableFileSystem
 
 
 class ChecksumAlgorithm(Enum):
@@ -168,7 +168,7 @@ def _write_checksum_file(
             lines.append(f"{hash_val} *{filename}")
 
     content = "\n".join(lines) + "\n"
-    with path.fs.open_write(path) as f:
+    with cast(WritableFileSystem, path.fs).open_write(path) as f:
         f.write(content.encode("utf-8"))
 
 
@@ -446,7 +446,7 @@ def _run_checksum(
     return errors
 
 
-def _show_hash_results(fs: FileSystem, results: list[ChecksumResult]) -> None:
+def _show_hash_results(fs: ReadableFileSystem, results: list[ChecksumResult]) -> None:
     """Show hash results in a dialog."""
     # Create a simple results window
     root = None

@@ -408,6 +408,33 @@ class SmbFileSystem(FileSystem):
         finally:
             src_file.close()
 
+    def set_mtime(self, path: VfsPath, mtime: float) -> None:
+        import datetime
+
+        smb_path = self._to_smb_path(path)
+        try:
+            from smbprotocol.file import File, FileStandardInformation
+
+            file_obj = File(self._tree, smb_path)
+            file_obj.create(
+                ImpersonationLevel.Impersonation,
+                FilePipePrinterAccessMask.WRITE_ATTRIBUTES,
+                ShareAccess.FILE_SHARE_READ | ShareAccess.FILE_SHARE_WRITE,
+                CreateDisposition.FILE_OPEN,
+                CreateOptions.FILE_SYNCHRONOUS_IO_NONALERT,
+                FileAttributes.FILE_ATTRIBUTE_NORMAL,
+            )
+            try:
+                info = FileStandardInformation()
+                dt = datetime.datetime.fromtimestamp(mtime, tz=datetime.UTC)
+                info.last_write_time = dt
+                info.creation_time = dt
+                file_obj.set_info(info)
+            finally:
+                file_obj.close()
+        except OSError:
+            pass
+
     def close(self) -> None:
         try:
             self._tree.disconnect()

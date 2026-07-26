@@ -158,6 +158,13 @@ class SftpFileSystem(FileSystem):
         except OSError as exc:
             raise OSError(f"Cannot rename '{src_path}' to '{dst_path}': {exc}") from exc
 
+    def set_mtime(self, path: VfsPath, mtime: float) -> None:
+        remote_path = self._to_remote_path(path)
+        try:
+            self._sftp.utime(remote_path, (mtime, mtime))
+        except OSError:
+            pass
+
     def close(self) -> None:
         try:
             self._sftp.close()

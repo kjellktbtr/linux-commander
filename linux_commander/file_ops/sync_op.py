@@ -16,15 +16,15 @@ import tkinter as tk
 from dataclasses import dataclass
 from enum import Enum
 from tkinter import messagebox, ttk
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from linux_commander.dialogs import _center_over
 from linux_commander.file_ops import FileOperation
 from linux_commander.operations import CancelPredicate, OperationError, ProgressCallback
-from linux_commander.vfs import VfsPath
+from linux_commander.vfs import VfsPath, WritableFileSystem
 
 if TYPE_CHECKING:
-    from linux_commander.vfs import FileSystem
+    from linux_commander.vfs import ReadableFileSystem, WritableFileSystem
 
 
 class SyncMode(Enum):
@@ -56,7 +56,7 @@ class SyncPlan:
     files_to_skip: int
 
 
-def _stat_or_none(fs: FileSystem, path: VfsPath):
+def _stat_or_none(fs: ReadableFileSystem, path: VfsPath):
     """Stat a path, return None if not found."""
     try:
         return fs.stat(path)
@@ -593,7 +593,7 @@ def _run_sync(
         try:
             if action.action == "delete":
                 if action.dest is not None:
-                    action.dest.fs.delete(action.dest)
+                    cast(WritableFileSystem, action.dest.fs).delete(action.dest)
             elif action.action in ("copy", "update"):
                 if action.source is not None and action.dest is not None:
                     # Ensure destination directory exists

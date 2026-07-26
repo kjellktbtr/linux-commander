@@ -148,13 +148,13 @@ class JottaSession:
 class Settings:
     """Application settings, persisted to JSON."""
 
-    font_family: str = "TkFixedFont"
-    font_size: int = 10
+    font_family: str = "Terminus"
+    font_size: int = 12
     # Editor and Viewer font settings (shared)
-    editor_font_family: str = "TkFixedFont"
-    editor_font_size: int = 10
-    viewer_font_family: str = "TkFixedFont"
-    viewer_font_size: int = 10
+    editor_font_family: str = "Terminus"
+    editor_font_size: int = 12
+    viewer_font_family: str = "Terminus"
+    viewer_font_size: int = 12
     ftp_sessions: list[FtpSession] = field(default_factory=list)
     jotta_sessions: list[JottaSession] = field(default_factory=list)
     selection_patterns: list[str] = field(default_factory=lambda: ["*"])
@@ -208,95 +208,35 @@ class Settings:
     duplicate_large_file_mb: float = 10.0
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "font_family": self.font_family,
-            "font_size": self.font_size,
-            "editor_font_family": self.editor_font_family,
-            "editor_font_size": self.editor_font_size,
-            "viewer_font_family": self.viewer_font_family,
-            "viewer_font_size": self.viewer_font_size,
-            "stored_keys": [asdict(s) for s in self.stored_keys],
-            "ftp_sessions": [asdict(s) for s in self.ftp_sessions],
-            "jotta_sessions": [asdict(s) for s in self.jotta_sessions],
-            "selection_patterns": self.selection_patterns,
-            "terminal_command_linux": self.terminal_command_linux,
-            "terminal_command_windows": self.terminal_command_windows,
-            "json_indent": self.json_indent,
-            "image_extensions": self.image_extensions,
-            "theme": self.theme,
-            "show_hidden": self.show_hidden,
-            "sort_key": self.sort_key,
-            "sort_reverse": self.sort_reverse,
-            "show_icons": self.show_icons,
-            "show_extension": self.show_extension,
-            "visible_columns": self.visible_columns,
-            "left_path": self.left_path,
-            "right_path": self.right_path,
-            "left_marks": self.left_marks,
-            "right_marks": self.right_marks,
-            "active_side": self.active_side,
-            "left_sort_key": self.left_sort_key,
-            "left_sort_reverse": self.left_sort_reverse,
-            "left_show_hidden": self.left_show_hidden,
-            "right_sort_key": self.right_sort_key,
-            "right_sort_reverse": self.right_sort_reverse,
-            "right_show_hidden": self.right_show_hidden,
-            "duplicate_large_file_mb": self.duplicate_large_file_mb,
-        }
+        """Serialize settings to a JSON-compatible dict.
+
+        Uses ``dataclasses.asdict()`` which recursively handles nested
+        dataclasses (StoredKey, FtpSession, JottaSession).
+        """
+        return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Settings:
+        """Deserialize settings from a JSON-compatible dict.
+
+        Reconstructs nested dataclasses (StoredKey, FtpSession, JottaSession)
+        from their dict representations. Unknown keys are silently ignored
+        for forward compatibility.
+        """
+        # Reconstruct nested dataclasses
+        stored_keys = [StoredKey(**s) for s in data.get("stored_keys", [])]
         ftp_sessions = [FtpSession(**s) for s in data.get("ftp_sessions", [])]
         jotta_sessions = [JottaSession(**s) for s in data.get("jotta_sessions", [])]
-        default_linux_term = 'xterm -e bash -c "{cmd}; exec bash"'
-        default_win_term = 'start "" cmd /k {cmd}'
-        default_img_exts = [
-            ".png",
-            ".jpg",
-            ".jpeg",
-            ".gif",
-            ".bmp",
-            ".tiff",
-            ".tif",
-            ".webp",
-            ".ico",
-            ".svg",
-        ]
-        stored_keys = [StoredKey(**s) for s in data.get("stored_keys", [])]
+
+        # Filter out nested fields that need special handling
+        nested_keys = {"stored_keys", "ftp_sessions", "jotta_sessions"}
+        flat_data = {k: v for k, v in data.items() if k not in nested_keys}
+
         return cls(
-            font_family=data.get("font_family", "TkFixedFont"),
-            font_size=data.get("font_size", 10),
-            editor_font_family=data.get("editor_font_family", "TkFixedFont"),
-            editor_font_size=data.get("editor_font_size", 10),
-            viewer_font_family=data.get("viewer_font_family", "TkFixedFont"),
-            viewer_font_size=data.get("viewer_font_size", 10),
+            **flat_data,
             stored_keys=stored_keys,
             ftp_sessions=ftp_sessions,
             jotta_sessions=jotta_sessions,
-            selection_patterns=data.get("selection_patterns", ["*"]),
-            terminal_command_linux=data.get("terminal_command_linux", default_linux_term),
-            terminal_command_windows=data.get("terminal_command_windows", default_win_term),
-            json_indent=data.get("json_indent", 2),
-            image_extensions=data.get("image_extensions", default_img_exts),
-            theme=data.get("theme", "darkly"),
-            show_hidden=data.get("show_hidden", False),
-            sort_key=data.get("sort_key", "name"),
-            sort_reverse=data.get("sort_reverse", False),
-            show_icons=data.get("show_icons", True),
-            show_extension=data.get("show_extension", True),
-            visible_columns=data.get("visible_columns", ["name", "size", "modified", "extension"]),
-            left_path=data.get("left_path", ""),
-            right_path=data.get("right_path", ""),
-            left_marks=data.get("left_marks", []),
-            right_marks=data.get("right_marks", []),
-            active_side=data.get("active_side", "left"),
-            left_sort_key=data.get("left_sort_key", "name"),
-            left_sort_reverse=data.get("left_sort_reverse", False),
-            left_show_hidden=data.get("left_show_hidden", False),
-            right_sort_key=data.get("right_sort_key", "name"),
-            right_sort_reverse=data.get("right_sort_reverse", False),
-            right_show_hidden=data.get("right_show_hidden", False),
-            duplicate_large_file_mb=data.get("duplicate_large_file_mb", 10.0),
         )
 
 

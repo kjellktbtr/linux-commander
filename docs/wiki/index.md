@@ -6,7 +6,7 @@ sources:
   - CONTRIBUTING.md
 related: []
 created: 2026-07-14
-updated: 2026-07-18
+updated: 2026-07-22
 confidence: high
 ---
 
@@ -22,6 +22,10 @@ A dual-pane "orthodox file manager" in the tradition of Norton Commander, Midnig
 - [[app]] — CommanderApp: dual-panel window, F-key bar, key routing, app shell
 - [[panel]] — FilePanel: single directory-listing pane (Treeview-backed)
 - [[keys]] — F-key table shared by key bar and global bindings
+- [[fkey_bar]] — FKeyBar widget: F-key button row (extracted from app.py)
+- [[command_prompt]] — CommandPrompt widget: command entry bar with history
+- [[menu_bar]] — MenuBar builder with MenuCallbacks protocol
+- [[panel_loading]] — Panel loading helpers: tree population, entry formatting
 
 ### Filesystem & VFS
 - [[fs]] — Directory listing, sorting, formatting helpers
@@ -29,6 +33,12 @@ A dual-pane "orthodox file manager" in the tradition of Norton Commander, Midnig
 - [[plugins]] — Auto-discovered VFS archive/protocol plugins + viewer document-reader plugins
 - [[volumes]] — Volume/drive enumeration (Linux /proc/mounts backend, Windows drive letters)
 - [[platform_util]] — Cross-platform "open with default app" seam
+
+### Plugin Systems
+- [[sort_criteria]] — Plugin-based sort criteria (name, size, mtime, extension)
+- [[codecs]] — Plugin-based compression codecs (none, gz, bz2, xz, zstd)
+- [[containers]] — Plugin-based archive container builders (zip, tar, grp, 7z, iso)
+- [[conflict_strategies]] — Plugin-based conflict resolution (skip, replace, compare, etc.)
 
 ### Network VFS Backends
 - [[smb_vfs]] — SMB/CIFS backend (`smbprotocol`), read/write

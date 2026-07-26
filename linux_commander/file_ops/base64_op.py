@@ -11,6 +11,7 @@ as ``<filename>`` (stripping the trailing ``.b64`` suffix).  Files without a
 from __future__ import annotations
 
 import base64
+from typing import cast
 
 from linux_commander.file_ops import FileOperation
 from linux_commander.operations import (
@@ -19,7 +20,7 @@ from linux_commander.operations import (
     ProgressCallback,
     call_progress,
 )
-from linux_commander.vfs import VfsPath
+from linux_commander.vfs import VfsPath, WritableFileSystem
 
 
 def _encode(
@@ -41,7 +42,7 @@ def _encode(
             with src.fs.open_read(src) as inp:
                 raw = inp.read()
             encoded = base64.b64encode(raw)
-            with dest_dir.fs.open_write(dest) as out:
+            with cast(WritableFileSystem, dest_dir.fs).open_write(dest) as out:
                 out.write(encoded)
         except OSError as exc:
             errors.append(OperationError(path=src, message=str(exc)))
@@ -77,7 +78,7 @@ def _decode(
             with src.fs.open_read(src) as inp:
                 encoded = inp.read()
             decoded = base64.b64decode(encoded)
-            with dest_dir.fs.open_write(dest) as out:
+            with cast(WritableFileSystem, dest_dir.fs).open_write(dest) as out:
                 out.write(decoded)
         except (OSError, Exception) as exc:
             errors.append(OperationError(path=src, message=str(exc)))

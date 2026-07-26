@@ -26,13 +26,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from tkinter import ttk
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from linux_commander.dialogs import _center_over, confirm
 from linux_commander.file_ops import FileOperation
 from linux_commander.operations import CancelPredicate, OperationError, ProgressCallback
 from linux_commander.settings import load_settings
-from linux_commander.vfs import LocalFileSystem, VfsPath
+from linux_commander.vfs import LocalFileSystem, VfsPath, WritableFileSystem
 
 if TYPE_CHECKING:
     from linux_commander.app import CommanderApp
@@ -720,14 +720,14 @@ def _run_duplicate_finder(
             def on_delete(files: list[VfsPath]) -> None:
                 for f in files:
                     try:
-                        f.fs.delete(f)
+                        cast(WritableFileSystem, f.fs).delete(f)
                     except OSError as e:
                         errors.append(OperationError(path=f, message=f"Delete failed: {e}"))
 
             def on_move(files: list[VfsPath], dest: VfsPath) -> None:
                 for f in files:
                     try:
-                        f.fs.rename(f, dest / f.name)
+                        cast(WritableFileSystem, f.fs).rename(f, dest / f.name)
                     except OSError as e:
                         errors.append(OperationError(path=f, message=f"Move failed: {e}"))
 

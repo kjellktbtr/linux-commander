@@ -242,7 +242,7 @@ def test_crp_extension_is_registered() -> None:
 
 
 def test_open_fs_double_nested_grp_zst_crp_preserves_full_inner_name(tmp_path: Path) -> None:
-    pytest.importorskip("compression.zstd")
+    pytest.importorskip("zstandard")
     from linux_commander import archiving
     from linux_commander.vfs import MountManager
 

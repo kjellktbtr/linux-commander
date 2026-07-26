@@ -18,6 +18,10 @@ except ImportError:
 # Module-level cache: name → ImageTk.PhotoImage  (keeps refs alive for Tk)
 _cache: dict[str, object] = {}
 
+# Master Tk instance for PhotoImage creation — set by CommanderApp at startup
+# so that icons are registered with the correct root after destroy/recreate cycles.
+_tk_master: object = None
+
 _SZ = 16  # icon side length in pixels
 
 
@@ -177,18 +181,29 @@ _EXEC_EXTS = {
 # ---------------------------------------------------------------------------
 
 
-def _build_cache() -> None:
+def _build_cache(master: object | None = None) -> None:
     """Render all icons into PhotoImage objects.  Must be called after a Tk
     root window exists so ImageTk can create the PhotoImages."""
     if not _PIL_AVAILABLE:
         return
-    _cache["folder"] = ImageTk.PhotoImage(_make_folder())
-    _cache["parent"] = ImageTk.PhotoImage(_make_parent())
-    _cache["file"] = ImageTk.PhotoImage(_make_file())
-    _cache["exec"] = ImageTk.PhotoImage(_make_exec())
-    _cache["text"] = ImageTk.PhotoImage(_make_text())
-    _cache["image"] = ImageTk.PhotoImage(_make_image_icon())
-    _cache["archive"] = ImageTk.PhotoImage(_make_archive())
+    _cache["folder"] = ImageTk.PhotoImage(_make_folder(), master=master)
+    _cache["parent"] = ImageTk.PhotoImage(_make_parent(), master=master)
+    _cache["file"] = ImageTk.PhotoImage(_make_file(), master=master)
+    _cache["exec"] = ImageTk.PhotoImage(_make_exec(), master=master)
+    _cache["text"] = ImageTk.PhotoImage(_make_text(), master=master)
+    _cache["image"] = ImageTk.PhotoImage(_make_image_icon(), master=master)
+    _cache["archive"] = ImageTk.PhotoImage(_make_archive(), master=master)
+
+
+def set_tk_master(master: object) -> None:
+    """Set the master Tk instance for icon PhotoImage creation.
+
+    Call this from CommanderApp.__init__ so that icons are registered with
+    the correct root window.  This matters when apps are destroyed and
+    recreated (e.g. in integration tests).
+    """
+    global _tk_master
+    _tk_master = master
 
 
 def icon_for_entry(entry) -> object | None:
@@ -197,7 +212,7 @@ def icon_for_entry(entry) -> object | None:
     if not _PIL_AVAILABLE:
         return None
     if not _cache:
-        _build_cache()
+        _build_cache(_tk_master)
     if entry.is_parent:
         return _cache.get("parent")
     if entry.is_dir:

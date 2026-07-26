@@ -11,7 +11,7 @@ from __future__ import annotations
 import io
 from typing import BinaryIO
 
-from linux_commander.vfs import FileEntry, FileSystem, StatResult, VfsPath
+from linux_commander.vfs import FileEntry, FileSystem, ReadableFileSystem, StatResult, VfsPath
 
 try:
     import rarfile as _rarfile_mod  # type: ignore[import-untyped]
@@ -22,7 +22,7 @@ except ImportError:
     EXTENSIONS = ()
 
 
-class RarFileSystem(FileSystem):
+class RarFileSystem(ReadableFileSystem):
     """Read-only VFS backend backed by a RAR archive.
 
     ``parts`` encoding inside the RAR:

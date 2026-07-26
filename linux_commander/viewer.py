@@ -15,8 +15,6 @@ Public API (unchanged):
 from __future__ import annotations
 
 import csv
-import io
-import json as _json
 import queue
 import threading
 import tkinter as tk
@@ -29,7 +27,8 @@ from typing import Literal
 from linux_commander import dialogs, plugins
 from linux_commander.settings import Settings
 from linux_commander.syntax import apply_highlighting, available_languages
-from linux_commander.vfs import LocalFileSystem, VfsPath
+from linux_commander.vfs import LocalFileSystem, VfsPath, WritableFileSystem
+from linux_commander.viewer_modes import ViewerMode, discover_modes
 
 MAX_VIEW_BYTES = 2 * 1024 * 1024
 """Cap on how much of a file the built-in viewer/editor will read."""
@@ -365,13 +364,7 @@ class TextWindow:
         self.read_only = read_only
         self.modified = False
         self.word_wrap = False
-        self.hex_mode = False
-        self.json_formatted = False
         self.forced_lang: str | None = None  # None = auto by extension
-        self.csv_mode = False
-        self.csv_delim: str | None = None  # None = auto-detect
-        self.strings_mode = False
-        self.strings_min_len = 4
 
         # Rows from a document reader plugin (xlsx/pandas), bypassing CSV
         # parsing -- see _render_table. None means "not a document preview",
@@ -390,6 +383,13 @@ class TextWindow:
         # Background strings-scan state (see _start_strings_scan)
         self._strings_cancel: threading.Event | None = None
         self._strings_queue: queue.Queue[str | None] | None = None
+
+        # Discovered viewer modes (hex, json, csv, strings, ...)
+        self._modes: list[ViewerMode] = []
+        self._active_mode: ViewerMode | None = None
+        self._title_suffix: str = ""
+        for cls in discover_modes():
+            self._modes.append(cls())
 
         self.top = tk.Toplevel(parent)
         self._setup_window()
@@ -420,17 +420,7 @@ class TextWindow:
     def _set_title(self, name: str) -> None:
         mode = "View" if self.read_only else "Edit"
         suffix = " *" if self.modified else ""
-        extra = ""
-        if self.hex_mode:
-            extra = " [Hex]"
-        elif self.csv_mode:
-            extra = " [Table]" if self._table_rows is not None else " [CSV]"
-            if self._table_truncated:
-                extra += " (truncated)"
-        elif self.json_formatted:
-            extra = " [JSON]"
-        elif self.strings_mode:
-            extra = " [Strings]"
+        extra = self._title_suffix
         self.top.title(f"{name}{suffix}{extra} - {mode}")
 
     # ------------------------------------------------------------------
@@ -491,12 +481,6 @@ class TextWindow:
         edit_menu.add_command(
             label="Find...", accelerator="Ctrl+F", command=self._show_search, underline=0
         )
-        edit_menu.add_command(
-            label="Go To Offset...",
-            accelerator="Ctrl+G",
-            command=self._goto_offset_dialog,
-            underline=5,
-        )
 
         # --- View ---
         view_menu = tk.Menu(menubar, tearoff=0)
@@ -516,96 +500,17 @@ class TextWindow:
             underline=0,
         )
         view_menu.add_separator()
-        hex_state: Literal["normal", "disabled"] = (
-            "disabled" if self.csv_mode or self.strings_mode else "normal"
-        )
-        self._hex_var = tk.BooleanVar(value=self.hex_mode)
-        view_menu.add_checkbutton(
-            label="Hexdump",
-            variable=self._hex_var,
-            command=self._toggle_hex,
-            state=hex_state,
-            underline=0,
-        )
-        # Hex Tools submenu (enabled only in hex mode)
-        self._hex_submenu = tk.Menu(view_menu, tearoff=0)
-        view_menu.add_cascade(
-            label="Hex Tools", menu=self._hex_submenu, state="disabled", underline=0
-        )
-        self._json_var = tk.BooleanVar(value=self.json_formatted)
-        json_state: Literal["normal", "disabled"] = (
-            "disabled" if self.hex_mode or self.csv_mode or self.strings_mode else "normal"
-        )
-        view_menu.add_checkbutton(
-            label="JSON Pretty-Print",
-            variable=self._json_var,
-            command=self._toggle_json,
-            state=json_state,
-            underline=0,
-        )
-        view_menu.add_separator()
-        # A document-plugin table preview (xlsx/pandas) is always on and has
-        # no delimiter to pick -- the rows didn't come from parsing text.
-        is_table_preview = self._table_rows is not None
-        csv_state: Literal["normal", "disabled"] = (
-            "disabled" if self.hex_mode or self.strings_mode or is_table_preview else "normal"
-        )
-        self._csv_var = tk.BooleanVar(value=self.csv_mode)
-        view_menu.add_checkbutton(
-            label="CSV Table",
-            variable=self._csv_var,
-            command=self._toggle_csv,
-            state=csv_state,
-            underline=0,
-        )
-        csv_delim_menu = tk.Menu(view_menu, tearoff=0)
-        csv_delim_state: Literal["normal", "disabled"] = (
-            "normal" if self.csv_mode and not self.hex_mode and not is_table_preview else "disabled"
-        )
-        view_menu.add_cascade(
-            label="CSV Separator", menu=csv_delim_menu, state=csv_delim_state, underline=4
-        )
-        self._csv_delim_var = tk.StringVar(value=self.csv_delim or "")
-        for csv_label, csv_value in (
-            ("Auto", ""),
-            ("Comma", ","),
-            ("Semicolon", ";"),
-            ("Tab", "\t"),
-        ):
-            csv_delim_menu.add_radiobutton(
-                label=csv_label,
-                value=csv_value,
-                variable=self._csv_delim_var,
-                command=self._on_csv_delim_pick,
-            )
-        view_menu.add_separator()
-        strings_state: Literal["normal", "disabled"] = (
-            "disabled" if self.hex_mode or self.csv_mode else "normal"
-        )
-        self._strings_var = tk.BooleanVar(value=self.strings_mode)
-        view_menu.add_checkbutton(
-            label="Strings",
-            variable=self._strings_var,
-            command=self._toggle_strings,
-            state=strings_state,
-            underline=0,
-        )
-        strings_len_menu = tk.Menu(view_menu, tearoff=0)
-        view_menu.add_cascade(label="Strings Min Length", menu=strings_len_menu, underline=8)
-        self._strings_min_len_var = tk.IntVar(value=self.strings_min_len)
-        for length in (3, 4, 6, 8, 16):
-            strings_len_menu.add_radiobutton(
-                label=str(length),
-                value=length,
-                variable=self._strings_min_len_var,
-                command=self._on_strings_min_len_pick,
-            )
+
+        # Plugin-discovered viewer modes (hex, json, csv, strings, ...)
+        for mode in self._modes:
+            mode.build_menu(self, view_menu)  # type: ignore[arg-type]
+
         view_menu.add_separator()
         view_menu.add_command(label="Font...", command=self._cmd_font, underline=0)
 
-        # --- Syntax (disabled while hex mode is active) ---
+        # --- Syntax (disabled while a display mode is active) ---
         syntax_menu = tk.Menu(menubar, tearoff=0)
-        syntax_cascade_state = "disabled" if self.hex_mode else "normal"
+        syntax_cascade_state = "disabled" if self._active_mode is not None else "normal"
         menubar.add_cascade(
             label="Syntax",
             menu=syntax_menu,
@@ -816,8 +721,94 @@ class TextWindow:
 
     def _apply_edit_state(self) -> None:
         """Set the text widget state based on current mode flags."""
-        editable = not self.read_only and not self.hex_mode and not self.strings_mode
+        editable = not self.read_only and self._active_mode is None
         self.text_widget.configure(state="normal" if editable else "disabled")
+
+    # ------------------------------------------------------------------
+    # ViewerContext protocol implementation
+    # ------------------------------------------------------------------
+
+    # is_active is a per-mode concept; TextWindow tracks _active_mode instead.
+    # The protocol requires this attribute for compatibility.
+    is_active = False  # type: ignore[assignability]
+
+    # Protocol aliases — TextWindow stores these with underscore prefixes
+    @property
+    def settings(self) -> Settings:
+        return self._settings
+
+    @property
+    def raw_text(self) -> str:
+        return self._raw_text
+
+    @property
+    def csv_frame(self) -> ttk.Frame:
+        return self._csv_frame
+
+    @property
+    def csv_tree(self) -> ttk.Treeview:
+        return self._csv_tree
+
+    def clear_text(self) -> None:
+        self.text_widget.configure(state="normal")
+        self.text_widget.delete("1.0", "end")
+
+    def insert_text(self, text: str) -> None:
+        self.text_widget.insert("1.0", text)
+
+    def set_title_suffix(self, suffix: str) -> None:
+        self._title_suffix = suffix
+        self._set_title(self.path.name if self.path else "Untitled")
+
+    def apply_syntax_highlighting(self) -> None:
+        apply_highlighting(self.text_widget, self.path or _dummy_path(), self.forced_lang)  # type: ignore[arg-type]
+
+    def clear_syntax_tags(self) -> None:
+        from linux_commander.syntax import _clear_syntax_tags
+
+        _clear_syntax_tags(self.text_widget)
+
+    def set_editable(self, enabled: bool) -> None:
+        self.text_widget.configure(state="normal" if enabled else "disabled")
+
+    def show_error(self, title: str, message: str) -> None:
+        dialogs.error(self.top, message, title=title)
+
+    def set_modified(self, modified: bool) -> None:
+        self.modified = modified
+        if not modified:
+            self.text_widget.edit_modified(False)
+
+    def deactivate_other_modes(self, group: str) -> None:
+        """Deactivate all modes in *group* except the one being activated."""
+        for mode in self._modes:
+            if mode.exclusive_group != group:
+                continue
+            # Skip the mode that's being activated (its var is already True)
+            var = getattr(mode, "_var", None)
+            if var is not None and var.get():
+                continue
+            # Deactivate this mode
+            if var is not None:
+                var.set(False)
+            if mode is self._active_mode:
+                mode.on_deactivate(self)  # type: ignore[arg-type]
+                self._active_mode = None
+
+    def reactivate_group(self, group: str) -> None:
+        """No-op: menu state is managed by Tk variables."""
+
+    def show_csv_area(self) -> None:
+        self.text_widget.grid_remove()
+        self._text_yscroll.grid_remove()
+        self._text_xscroll.grid_remove()
+        self._csv_frame.grid()
+
+    def show_text_area(self) -> None:
+        self._csv_frame.grid_remove()
+        self.text_widget.grid()
+        self._text_yscroll.grid()
+        self._text_xscroll.grid()
 
     # ------------------------------------------------------------------
     # Status bar
@@ -852,8 +843,6 @@ class TextWindow:
         top.bind("<Control-z>", lambda e: self._cmd_undo())
         top.bind("<Control-x>", lambda e: self._cmd_cut())
         top.bind("<Control-v>", lambda e: self._cmd_paste())
-        # Hex mode: Ctrl+G for goto offset
-        top.bind("<Control-g>", lambda e: self._goto_offset_dialog())
 
     # ------------------------------------------------------------------
     # Mode transitions
@@ -919,8 +908,15 @@ class TextWindow:
             text, truncated = doc.text, False
             is_binary = False
 
-        self._cancel_strings_scan()
-        self.strings_mode = False
+        # Deactivate any currently active display mode
+        if self._active_mode is not None:
+            self._active_mode.on_deactivate(self)  # type: ignore[arg-type]
+            var = getattr(self._active_mode, "_var", None)
+            if var is not None:
+                var.set(False)
+            self._active_mode = None
+            self._title_suffix = ""
+
         self.path = path
         self._raw_text = text
         self._document_preview = doc is not None
@@ -930,10 +926,6 @@ class TextWindow:
         else:
             self._table_rows = None
             self._table_truncated = False
-        self.csv_mode = self._table_rows is not None or (
-            doc is None and path.suffix.lower() in CSV_EXTENSIONS
-        )
-        self.csv_delim = None
         if doc is not None:
             # A document preview can't be saved back over the original binary
             # file, so force read-only regardless of how the window was opened.
@@ -953,13 +945,31 @@ class TextWindow:
         self._set_title(path.name)
         apply_highlighting(self.text_widget, path, self.forced_lang)  # type: ignore[arg-type]
         self._apply_edit_state()
-        self._apply_view_mode()
-        self._rebuild_mode_sensitive_menus()
 
         # Auto-switch to hex mode for binary files
-        if is_binary and not self.hex_mode:
-            self._hex_var.set(True)
-            self._toggle_hex()
+        if is_binary:
+            for mode in self._modes:
+                if mode.name == "Hex":
+                    var = getattr(mode, "_var", None)
+                    if var is not None:
+                        var.set(True)
+                    mode.on_activate(self)  # type: ignore[arg-type]
+                    self._active_mode = mode
+                    break
+
+        # Auto-switch to CSV mode for CSV files
+        if not is_binary and self._active_mode is None:
+            if self._table_rows is not None or (
+                doc is None and path.suffix.lower() in CSV_EXTENSIONS
+            ):
+                for mode in self._modes:
+                    if mode.name == "CSV":
+                        var = getattr(mode, "_var", None)
+                        if var is not None:
+                            var.set(True)
+                        mode.on_activate(self)  # type: ignore[arg-type]
+                        self._active_mode = mode
+                        break
 
     # ------------------------------------------------------------------
     # Save
@@ -975,7 +985,7 @@ class TextWindow:
                 tmp_real = real.with_name(f".{real.name}.tmp")
                 tmp_real.write_text(content, encoding="utf-8")
                 tmp_real.replace(real)
-            elif path.fs.writable:
+            elif isinstance(path.fs, WritableFileSystem):
                 # No real local file (archive member, remote backend like
                 # Jottacloud/SMB/WebDAV/SFTP) but the backend is writable --
                 # go through the VFS write API instead of assuming
@@ -1025,25 +1035,26 @@ class TextWindow:
             return
         if not self._prompt_save_if_modified():
             return
-        self._cancel_strings_scan()
+        # Deactivate any active display mode
+        if self._active_mode is not None:
+            self._active_mode.on_deactivate(self)  # type: ignore[arg-type]
+            var = getattr(self._active_mode, "_var", None)
+            if var is not None:
+                var.set(False)
+            self._active_mode = None
+            self._title_suffix = ""
         self.path = None
         self._raw_text = ""
         self.text_widget.configure(state="normal")
         self.text_widget.delete("1.0", "end")
         self.text_widget.edit_modified(False)
         self.modified = False
-        self.json_formatted = False
-        self.hex_mode = False
-        self.csv_mode = False
-        self.csv_delim = None
-        self.strings_mode = False
         self._table_rows = None
         self._table_truncated = False
         self._document_preview = False
-        self._apply_view_mode()
         self._set_title("Untitled")
         self._update_status_bar()
-        self._rebuild_mode_sensitive_menus()
+        self._apply_edit_state()
 
     def _cmd_open(self) -> None:
         if self.read_only:
@@ -1132,632 +1143,29 @@ class TextWindow:
     # Hexdump toggle
     # ------------------------------------------------------------------
 
-    def _toggle_hex(self) -> None:
-        entering = self._hex_var.get()
-
-        if entering:
-            # --- Enter hex mode ---
-            if self.path is None:
-                # No file on disk: encode current buffer
-                raw_text = self.text_widget.get("1.0", "end-1c")
-                data = raw_text.encode("utf-8", errors="replace")
-                truncated = False
-            else:
-                try:
-                    data, truncated = _read_raw_capped(self.path)
-                except OSError as exc:
-                    dialogs.error(
-                        self.top, f"Cannot read file for hexdump:\n{exc}", title="Hexdump"
-                    )
-                    self._hex_var.set(False)
-                    return
-
-            hex_text = _format_hexdump(data)
-            if truncated:
-                hex_text += "\n\n[... truncated - file exceeds the viewer's size limit ...]"
-
-            self.hex_mode = True
-            self.text_widget.configure(state="normal")
-            self.text_widget.delete("1.0", "end")
-            self.text_widget.insert("1.0", hex_text)
-            # Clear syntax tags — they're meaningless on hex text
-            from linux_commander.syntax import _clear_syntax_tags
-
-            _clear_syntax_tags(self.text_widget)
-            self._apply_edit_state()  # -> disabled
-            self._set_title(self.path.name if self.path else "Untitled")
-            self._rebuild_mode_sensitive_menus()
-            self._populate_hex_submenu()
-        else:
-            # --- Leave hex mode ---
-            self.hex_mode = False
-            # Restore raw text (or JSON-formatted if that was active)
-            restore = self._raw_text
-            self.text_widget.configure(state="normal")
-            self.text_widget.delete("1.0", "end")
-            self.text_widget.insert("1.0", restore)
-            self.text_widget.edit_modified(False)
-            self._apply_edit_state()
-            self._set_title(self.path.name if self.path else "Untitled")
-            apply_highlighting(self.text_widget, self.path or _dummy_path(), self.forced_lang)  # type: ignore[arg-type]
-            self._rebuild_mode_sensitive_menus()
-            self._update_hex_submenu_state()
-            # Configure selection tag for highlighting
-            self.text_widget.tag_configure("hex_sel", background="#c65c00", foreground="white")
-
     # ------------------------------------------------------------------
     # Hex mode helpers
     # ------------------------------------------------------------------
-
-    def _update_hex_submenu_state(self) -> None:
-        """Enable/disable Hex Tools submenu based on hex mode."""
-        if hasattr(self, "_hex_submenu"):
-            state = "normal" if self.hex_mode else "disabled"
-            try:
-                menubar = self.top.nametowidget(self.top["menu"])
-                for i in range(menubar.index("end") + 1):
-                    try:
-                        label = menubar.entrycget(i, "label")
-                        if label == "View":
-                            view_menu = menubar.nametowidget(menubar.entrycget(i, "menu"))
-                            for j in range(view_menu.index("end") + 1):
-                                try:
-                                    sublabel = view_menu.entrycget(j, "label")
-                                    if sublabel == "Hex Tools":
-                                        view_menu.entryconfigure(j, state=state)
-                                        break
-                                except tk.TclError:
-                                    continue
-                            break
-                    except tk.TclError:
-                        continue
-            except Exception:
-                pass
-
-    def _populate_hex_submenu(self) -> None:
-        """Build the Hex Tools submenu when entering hex mode."""
-        self._hex_submenu.delete(0, "end")
-        self._hex_submenu.add_command(
-            label="Go to Offset...", accelerator="Ctrl+G", command=self._goto_offset, underline=0
-        )
-        self._hex_submenu.add_command(
-            label="Find in Hex...",
-            accelerator="Ctrl+Shift+F",
-            command=self._find_in_hex,
-            underline=0,
-        )
-        self._hex_submenu.add_separator()
-        self._hex_submenu.add_command(
-            label="Copy as Hex", accelerator="Ctrl+Shift+C", command=self._copy_as_hex, underline=0
-        )
-        self._hex_submenu.add_command(
-            label="Copy as C Array", command=self._copy_as_c_array, underline=0
-        )
-
-    def _goto_offset(self) -> None:
-        """Show dialog to jump to a specific file offset."""
-        dialog = tk.Toplevel(self.top)
-        dialog.title("Go to Offset")
-        dialog.transient(self.top)
-        dialog.resizable(False, False)
-
-        ttk.Label(dialog, text="Offset (hex):").grid(row=0, column=0, padx=8, pady=8, sticky="w")
-        offset_var = tk.StringVar(value="0x0")
-        entry = ttk.Entry(dialog, textvariable=offset_var, width=20)
-        entry.grid(row=0, column=1, padx=8, pady=8)
-        entry.select_range(0, "end")
-        entry.focus_set()
-
-        def _do_goto() -> None:
-            val = offset_var.get().strip()
-            try:
-                # Accept 0x prefix, hex, or decimal
-                if val.lower().startswith("0x"):
-                    offset = int(val, 16)
-                elif all(c in "0123456789abcdefABCDEF" for c in val):
-                    offset = int(val, 16)
-                else:
-                    offset = int(val)
-            except ValueError:
-                dialogs.error(dialog, "Invalid offset format", title="Go to Offset")
-                return
-            if offset < 0:
-                dialogs.error(dialog, "Offset must be non-negative", title="Go to Offset")
-                return
-
-            # Find the line in the hexdump corresponding to this offset
-            line_num = offset // 16
-            self.text_widget.see(f"{line_num + 1}.0")
-            # Highlight the byte
-            self._highlight_offset(offset)
-            dialog.destroy()
-
-        btn_frame = ttk.Frame(dialog)
-        btn_frame.grid(row=1, column=0, columnspan=2, pady=8)
-        ttk.Button(btn_frame, text="OK", command=_do_goto).pack(side="right", padx=4)
-        ttk.Button(btn_frame, text="Cancel", command=dialog.destroy).pack(side="right", padx=4)
-
-        dialog.bind("<Return>", lambda e: _do_goto())
-        dialog.bind("<Escape>", lambda e: dialog.destroy())
-        _center_over(dialog, self.top)
-        dialog.grab_set()
-
-    def _goto_offset_dialog(self) -> str:
-        """Wrapper for menu/key binding to open goto offset dialog."""
-        self._goto_offset()
-        return "break"
-
-    def _highlight_offset(self, offset: int) -> None:
-        """Highlight a specific byte offset in the hexdump."""
-        line_num = offset // 16
-        byte_in_line = offset % 16
-        # Each line format: "00000000  48 65 6c 6c 6f 2c 20 57  6f 72 6c 64 21 0a"
-        # |Hello, World!.|
-        # Byte columns start at position 10 (after "00000000  ")
-        # Each byte is 3 chars (2 hex + space), with extra space after 8th byte
-        if byte_in_line < 8:
-            col = 10 + byte_in_line * 3
-        else:
-            col = 10 + 8 * 3 + 1 + (byte_in_line - 8) * 3  # extra space after 8th byte
-
-        start_idx = f"{line_num + 1}.{col}"
-        end_idx = f"{line_num + 1}.{col + 2}"
-        self.text_widget.tag_remove("hex_sel", "1.0", "end")
-        self.text_widget.tag_add("hex_sel", start_idx, end_idx)
-        self.text_widget.see(start_idx)
-
-    def _find_in_hex(self) -> None:
-        """Show dialog to search for hex bytes or ASCII text in hex mode."""
-        dialog = tk.Toplevel(self.top)
-        dialog.title("Find in Hex")
-        dialog.transient(self.top)
-        dialog.resizable(False, False)
-
-        ttk.Label(dialog, text="Search for:").grid(row=0, column=0, padx=8, pady=8, sticky="w")
-        search_var = tk.StringVar()
-        entry = ttk.Entry(dialog, textvariable=search_var, width=30)
-        entry.grid(row=0, column=1, padx=8, pady=8)
-        entry.focus_set()
-
-        # Search mode: hex bytes or ASCII text
-        mode_var = tk.StringVar(value="hex")
-        ttk.Radiobutton(
-            dialog, text="Hex bytes (e.g. 48 65 6c 6c 6f)", variable=mode_var, value="hex"
-        ).grid(row=1, column=0, columnspan=2, padx=8, sticky="w")
-        ttk.Radiobutton(
-            dialog, text="ASCII text (e.g. Hello)", variable=mode_var, value="ascii"
-        ).grid(row=2, column=0, columnspan=2, padx=8, sticky="w")
-
-        # Case sensitive for ASCII
-        case_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(dialog, text="Case sensitive", variable=case_var).grid(
-            row=3, column=0, columnspan=2, padx=8, sticky="w"
-        )
-
-        def _do_find() -> None:
-            pattern = search_var.get().strip()
-            if not pattern:
-                return
-            if mode_var.get() == "hex":
-                # Parse hex bytes
-                try:
-                    bytes_list = [int(b, 16) for b in pattern.split()]
-                    search_bytes = bytes(bytes_list)
-                except ValueError:
-                    dialogs.error(
-                        dialog,
-                        "Invalid hex bytes (use space-separated hex pairs)",
-                        title="Find in Hex",
-                    )
-                    return
-                self._search_bytes(search_bytes)
-            else:
-                # Search ASCII text
-                self._search_ascii(pattern, case_var.get())
-            dialog.destroy()
-
-        btn_frame = ttk.Frame(dialog)
-        btn_frame.grid(row=4, column=0, columnspan=2, pady=8)
-        ttk.Button(btn_frame, text="Find", command=_do_find).pack(side="right", padx=4)
-        ttk.Button(btn_frame, text="Cancel", command=dialog.destroy).pack(side="right", padx=4)
-
-        dialog.bind("<Return>", lambda e: _do_find())
-        dialog.bind("<Escape>", lambda e: dialog.destroy())
-        _center_over(dialog, self.top)
-        dialog.grab_set()
-
-    def _search_bytes(self, search_bytes: bytes) -> None:
-        """Search for byte sequence in the hexdump text."""
-        if not self.hex_mode:
-            return
-        # Get the raw data that was displayed
-        if self.path is None:
-            data = self.text_widget.get("1.0", "end-1c").encode("utf-8", errors="replace")
-        else:
-            data, _ = _read_raw_capped(self.path)
-
-        try:
-            idx = data.index(search_bytes)
-        except ValueError:
-            dialogs.error(self.top, "Byte sequence not found", title="Find in Hex")
-            return
-
-        self._highlight_offset(idx)
-
-    def _search_ascii(self, pattern: str, case_sensitive: bool) -> None:
-        """Search for ASCII text in the hexdump."""
-        if not self.hex_mode:
-            return
-        if self.path is None:
-            data = self.text_widget.get("1.0", "end-1c").encode("utf-8", errors="replace")
-        else:
-            data, _ = _read_raw_capped(self.path)
-
-        try:
-            if case_sensitive:
-                idx = data.index(pattern.encode("ascii", errors="ignore"))
-            else:
-                idx = data.lower().index(pattern.lower().encode("ascii", errors="ignore"))
-        except ValueError:
-            dialogs.error(self.top, "Text not found", title="Find in Hex")
-            return
-
-        self._highlight_offset(idx)
-
-    def _on_selection_change(self, event: tk.Event | None = None) -> None:
-        """Update status bar with byte range when selection changes in hex mode."""
-        if not self.hex_mode:
-            return
-        try:
-            sel_start = self.text_widget.index("sel.first")
-            sel_end = self.text_widget.index("sel.last")
-        except tk.TclError:
-            # No selection
-            return
-
-        # Convert text indices to byte offsets
-        start_offset = self._text_index_to_offset(sel_start)
-        end_offset = self._text_index_to_offset(sel_end)
-
-        if start_offset is not None and end_offset is not None:
-            if end_offset < start_offset:
-                start_offset, end_offset = end_offset, start_offset
-            length = end_offset - start_offset + 1
-            self._status_label.config(
-                text=f"Offset: 0x{start_offset:08X}  Length: {length} bytes  (0x{length:X})"
-            )
-
-    def _text_index_to_offset(self, text_index: str) -> int | None:
-        """Convert a text widget index (e.g., '5.12') to a byte offset in the hexdump."""
-        try:
-            line_str, col_str = text_index.split(".")
-            line = int(line_str) - 1  # 1-based to 0-based
-            col = int(col_str)
-        except (ValueError, AttributeError):
-            return None
-
-        if line < 0:
-            return None
-
-        # Each line has 16 bytes. Column mapping:
-        # Line format: "00000000  48 65 6c 6c 6f 2c 20 57  6f 72 6c 64 21 0a      |Hello, World!.|"
-        # Offset column: 0-9 (10 chars)
-        # Space: 10
-        # Hex bytes: 11-58 (48 chars for 16 bytes with spaces)
-        #   Bytes 0-7: positions 11-34 (each byte = 3 chars: XX + space)
-        #   Extra space at pos 35
-        #   Bytes 8-15: positions 36-58
-        # Space padding: 59-64 (6 spaces)
-        # ASCII bar starts at 65: '|...|'
-        hex_start = 11
-        if col < hex_start or col > hex_start + 47:
-            return None
-
-        byte_in_line = 0
-        if col <= 34:  # First 8 bytes
-            byte_in_line = (col - hex_start) // 3
-        elif col >= 36:  # Bytes 8-15 (after extra space)
-            byte_in_line = 8 + (col - 36) // 3
-        else:
-            return None
-
-        if byte_in_line >= 16:
-            return None
-        return line * 16 + byte_in_line
-
-    def _copy_as_hex(self) -> None:
-        """Copy selected bytes as space-separated hex string."""
-        if not self.hex_mode:
-            return
-        try:
-            sel_start = self.text_widget.index("sel.first")
-            sel_end = self.text_widget.index("sel.last")
-        except tk.TclError:
-            return
-
-        start_offset = self._text_index_to_offset(sel_start)
-        end_offset = self._text_index_to_offset(sel_end)
-
-        if start_offset is None or end_offset is None:
-            return
-
-        if end_offset < start_offset:
-            start_offset, end_offset = end_offset, start_offset
-
-        # Get raw data
-        if self.path is None:
-            data = self.text_widget.get("1.0", "end-1c").encode("utf-8", errors="replace")
-        else:
-            data, _ = _read_raw_capped(self.path)
-
-        selected = data[start_offset : end_offset + 1]
-        hex_str = " ".join(f"{b:02X}" for b in selected)
-        self.top.clipboard_clear()
-        self.top.clipboard_append(hex_str)
-        self._status_label.config(text=f"Copied {len(selected)} bytes as hex")
-
-    def _copy_as_c_array(self) -> None:
-        """Copy selected bytes as a C-style array initializer."""
-        if not self.hex_mode:
-            return
-        try:
-            sel_start = self.text_widget.index("sel.first")
-            sel_end = self.text_widget.index("sel.last")
-        except tk.TclError:
-            return
-
-        start_offset = self._text_index_to_offset(sel_start)
-        end_offset = self._text_index_to_offset(sel_end)
-
-        if start_offset is None or end_offset is None:
-            return
-
-        if end_offset < start_offset:
-            start_offset, end_offset = end_offset, start_offset
-
-        # Get raw data
-        if self.path is None:
-            data = self.text_widget.get("1.0", "end-1c").encode("utf-8", errors="replace")
-        else:
-            data, _ = _read_raw_capped(self.path)
-
-        selected = data[start_offset : end_offset + 1]
-        if not selected:
-            return
-
-        # Format as C array: unsigned char data[] = { 0x48, 0x65, ... };
-        lines = []
-        for i in range(0, len(selected), 16):
-            chunk = selected[i : i + 16]
-            line = "    " + ", ".join(f"0x{b:02X}" for b in chunk)
-            if i + 16 < len(selected):
-                line += ","
-            lines.append(line)
-
-        c_array = "unsigned char data[] = {\n" + ",\n".join(lines) + "\n};"
-        self.top.clipboard_clear()
-        self.top.clipboard_append(c_array)
-        self._status_label.config(text=f"Copied {len(selected)} bytes as C array")
 
     # ------------------------------------------------------------------
     # JSON pretty-print toggle
     # ------------------------------------------------------------------
 
-    def _toggle_json(self) -> None:
-        entering = self._json_var.get()
-
-        if entering:
-            # Get the current raw text (before any prior JSON formatting)
-            src = self._raw_text
-            try:
-                obj = _json.loads(src)
-                pretty = _json.dumps(obj, indent=self._settings.json_indent, ensure_ascii=False)
-            except _json.JSONDecodeError as exc:
-                dialogs.error(self.top, f"Not valid JSON:\n{exc}", title="JSON Pretty-Print")
-                self._json_var.set(False)
-                return
-
-            self.json_formatted = True
-            was_disabled = self.read_only or self.hex_mode
-            self.text_widget.configure(state="normal")
-            self.text_widget.delete("1.0", "end")
-            self.text_widget.insert("1.0", pretty)
-            if was_disabled:
-                self.text_widget.configure(state="disabled")
-            else:
-                # In edit mode, formatting counts as a modification
-                self.modified = True
-                self.text_widget.edit_modified(True)
-            self._set_title(self.path.name if self.path else "Untitled")
-            apply_highlighting(self.text_widget, self.path or _dummy_path(), self.forced_lang)  # type: ignore[arg-type]
-        else:
-            # Restore original raw text
-            self.json_formatted = False
-            was_disabled = self.read_only or self.hex_mode
-            self.text_widget.configure(state="normal")
-            self.text_widget.delete("1.0", "end")
-            self.text_widget.insert("1.0", self._raw_text)
-            if was_disabled:
-                self.text_widget.configure(state="disabled")
-            else:
-                self.modified = True
-                self.text_widget.edit_modified(True)
-            self._set_title(self.path.name if self.path else "Untitled")
-            apply_highlighting(self.text_widget, self.path or _dummy_path(), self.forced_lang)  # type: ignore[arg-type]
-
     # ------------------------------------------------------------------
     # CSV table view
     # ------------------------------------------------------------------
 
-    def _toggle_csv(self) -> None:
-        self.csv_mode = self._csv_var.get()
-        self._apply_view_mode()
-        self._set_title(self.path.name if self.path else "Untitled")
-        self._rebuild_mode_sensitive_menus()
-
-    def _on_csv_delim_pick(self) -> None:
-        self.csv_delim = self._csv_delim_var.get() or None
-        if self.csv_mode:
-            self._render_csv()
-
-    def _apply_view_mode(self) -> None:
-        """Show the CSV table or the plain text widget, per ``csv_mode``."""
-        if self.csv_mode:
-            self.text_widget.grid_remove()
-            self._text_yscroll.grid_remove()
-            self._text_xscroll.grid_remove()
-            self._csv_frame.grid()
-            self._render_table()
-        else:
-            self._csv_frame.grid_remove()
-            self.text_widget.grid()
-            self._text_yscroll.grid()
-            self._text_xscroll.grid()
-
-    def _render_table(self) -> None:
-        """Populate the table view from ``self._table_rows`` if set, else parse CSV.
-
-        ``_table_rows`` is set by a document reader plugin (e.g. xlsx/pandas)
-        that already produced ``list[list[str]]`` rows; when it's ``None`` the
-        table is showing a CSV/TSV file, parsed on the fly from
-        ``self._raw_text``.
-        """
-        if self._table_rows is not None:
-            self._populate_table(self._table_rows)
-        else:
-            self._render_csv()
-
-    def _render_csv(self) -> None:
-        """Parse ``self._raw_text`` as delimited data and populate the CSV table."""
-        delim = (
-            self.csv_delim
-            if self.csv_delim and len(self.csv_delim) == 1
-            else detect_delimiter(self._raw_text)
-        )
-        rows = list(csv.reader(io.StringIO(self._raw_text), delimiter=delim))
-        self._populate_table(rows)
-
-    def _populate_table(self, rows: list[list[str]]) -> None:
-        """Fill the ``ttk.Treeview`` from ``rows`` (``rows[0]`` is the header)."""
-        tree = self._csv_tree
-        tree.delete(*tree.get_children())
-        if not rows:
-            tree["columns"] = ()
-            return
-        header = rows[0]
-        width = max(len(header), 1)
-        columns = [f"col{i + 1}" for i in range(width)]
-        tree["columns"] = columns
-        for col_id, title in zip(columns, header, strict=False):
-            tree.heading(col_id, text=title or col_id)
-            tree.column(col_id, width=120, anchor="w", stretch=False)
-        for row in rows[1:]:
-            if len(row) < width:
-                row = row + [""] * (width - len(row))
-            elif len(row) > width:
-                row = row[:width]
-            tree.insert("", "end", values=row)
-
     # ------------------------------------------------------------------
     # Strings scan (background)
     # ------------------------------------------------------------------
-
-    def _toggle_strings(self) -> None:
-        entering = self._strings_var.get()
-
-        if entering:
-            if self.path is None:
-                dialogs.error(self.top, "There is no file on disk to scan.", title="Strings")
-                self._strings_var.set(False)
-                return
-
-            self.strings_mode = True
-            self.text_widget.configure(state="normal")
-            self.text_widget.delete("1.0", "end")
-            from linux_commander.syntax import _clear_syntax_tags
-
-            _clear_syntax_tags(self.text_widget)
-            self._apply_edit_state()  # -> disabled
-            self._set_title(self.path.name)
-            self._rebuild_mode_sensitive_menus()
-            self._start_strings_scan()
-        else:
-            self._cancel_strings_scan()
-            self.strings_mode = False
-            restore = self._raw_text
-            self.text_widget.configure(state="normal")
-            self.text_widget.delete("1.0", "end")
-            self.text_widget.insert("1.0", restore)
-            self.text_widget.edit_modified(False)
-            self._apply_edit_state()
-            self._set_title(self.path.name if self.path else "Untitled")
-            apply_highlighting(self.text_widget, self.path or _dummy_path(), self.forced_lang)  # type: ignore[arg-type]
-            self._rebuild_mode_sensitive_menus()
-
-    def _on_strings_min_len_pick(self) -> None:
-        self.strings_min_len = self._strings_min_len_var.get()
-        if self.strings_mode:
-            self._cancel_strings_scan()
-            self.text_widget.configure(state="normal")
-            self.text_widget.delete("1.0", "end")
-            self._apply_edit_state()
-            self._start_strings_scan()
-
-    def _start_strings_scan(self) -> None:
-        """Spawn the background scan worker and begin polling for results."""
-        assert self.path is not None
-        self._strings_cancel = threading.Event()
-        q: queue.Queue[str | None] = queue.Queue()
-        self._strings_queue = q
-        thread = threading.Thread(
-            target=_strings_worker,
-            args=(self.path, self.strings_min_len, q, self._strings_cancel),
-            daemon=True,
-        )
-        thread.start()
-        self.top.after(_STRINGS_POLL_MS, lambda: self._poll_strings(q))
-
-    def _cancel_strings_scan(self) -> None:
-        """Signal any in-flight background scan to stop."""
-        if self._strings_cancel is not None:
-            self._strings_cancel.set()
-        self._strings_queue = None
-
-    def _poll_strings(self, q: queue.Queue[str | None]) -> None:
-        """Tk-thread poll: drain queued strings into the text widget.
-
-        ``q`` is the queue captured when this particular scan started. If the
-        scan has since been cancelled or replaced (``self._strings_queue`` no
-        longer identical to ``q``) or strings mode was turned off, this stale
-        poll loop simply stops rescheduling itself.
-        """
-        if not self.strings_mode or self._strings_queue is not q:
-            return
-        batch: list[str] = []
-        done = False
-        try:
-            while True:
-                item = q.get_nowait()
-                if item is None:
-                    done = True
-                    break
-                batch.append(item)
-        except queue.Empty:
-            pass
-        if batch:
-            self.text_widget.configure(state="normal")
-            self.text_widget.insert("end", "\n".join(batch) + "\n")
-            self.text_widget.configure(state="disabled")
-        if not done:
-            self.top.after(_STRINGS_POLL_MS, lambda: self._poll_strings(q))
 
     # ------------------------------------------------------------------
     # Syntax picker
     # ------------------------------------------------------------------
 
     def _on_syntax_pick(self) -> None:
-        if self.hex_mode:
-            return  # Syntax coloring is meaningless on a hex dump
+        if self._active_mode is not None:
+            return  # Syntax coloring is meaningless while a display mode is active
         name = self._syntax_var.get()
         self.forced_lang = name if name else None
         apply_highlighting(self.text_widget, self.path or _dummy_path(), self.forced_lang)  # type: ignore[arg-type]
@@ -1765,42 +1173,6 @@ class TextWindow:
     # ------------------------------------------------------------------
     # Helpers for rebuilding parts of the menu
     # ------------------------------------------------------------------
-
-    def _rebuild_mode_sensitive_menus(self) -> None:
-        """Rebuild only the checkbutton states that depend on hex/json mode.
-
-        Rather than rebuilding the full menu (which loses StringVar state),
-        we rebuild the entire bar; BooleanVars are re-created with current
-        values so checkbuttons show the right state.
-        """
-        self._build_menu()
-        # After rebuilding, the View menu's "Hex Tools" cascade still points
-        # to the old submenu. Update it to point to the new self._hex_submenu
-        # and set its state based on hex_mode.
-        try:
-            menubar = self.top.nametowidget(self.top["menu"])
-            for i in range(menubar.index("end") + 1):
-                try:
-                    label = menubar.entrycget(i, "label")
-                    if label == "View":
-                        view_menu = menubar.nametowidget(menubar.entrycget(i, "menu"))
-                        for j in range(view_menu.index("end") + 1):
-                            try:
-                                sublabel = view_menu.entrycget(j, "label")
-                                if sublabel == "Hex Tools":
-                                    view_menu.entryconfigure(
-                                        j,
-                                        menu=self._hex_submenu,
-                                        state=("normal" if self.hex_mode else "disabled"),
-                                    )
-                                    break
-                            except tk.TclError:
-                                continue
-                        break
-                except tk.TclError:
-                    continue
-        except Exception:
-            pass
 
     # ------------------------------------------------------------------
     # Change tracking + status bar
@@ -1835,7 +1207,13 @@ class TextWindow:
 
     def _on_close(self) -> None:
         if self._prompt_save_if_modified():
-            self._cancel_strings_scan()
+            # Deactivate any active display mode
+            if self._active_mode is not None:
+                self._active_mode.on_deactivate(self)  # type: ignore[arg-type]
+                var = getattr(self._active_mode, "_var", None)
+                if var is not None:
+                    var.set(False)
+                self._active_mode = None
             self.top.destroy()
 
     def _close_and_break(self, event: tk.Event | None = None) -> str:

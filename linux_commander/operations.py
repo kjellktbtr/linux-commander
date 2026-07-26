@@ -28,9 +28,11 @@ from __future__ import annotations
 import shutil
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import Enum, auto
 from pathlib import Path
+from typing import cast
 
-from linux_commander.vfs import VfsPath
+from linux_commander.vfs import VfsPath, WritableFileSystem
 
 ProgressCallback = Callable[..., None]  # (current, total, name, [bytes_done, bytes_total])
 CancelPredicate = Callable[[], bool]
@@ -69,6 +71,96 @@ def _noop_progress(*args: object) -> None:
 
 def _never_cancel() -> bool:
     return False
+
+
+# ---------------------------------------------------------------------------
+# Conflict detection (pre-scan before copy/move)
+# ---------------------------------------------------------------------------
+
+
+class ConflictResolution(
+    Enum,
+):
+    """How to resolve a file conflict during copy/move."""
+
+    REPLACE = auto()
+    SKIP = auto()
+    REPLACE_IF_NEWER = auto()
+    REPLACE_IF_DIFFERENT_SIZE = auto()
+    COMPARE = auto()
+
+
+@dataclass(frozen=True, slots=True)
+class ConflictInfo:
+    """A single conflict: source file already exists at the destination."""
+
+    source: VfsPath
+    dest: VfsPath
+    source_size: int
+    source_mtime: float
+    dest_size: int
+    dest_mtime: float
+
+
+def find_conflicts(sources: list[VfsPath], dest_dir: VfsPath) -> list[ConflictInfo]:
+    """Pre-scan ``sources`` against ``dest_dir`` and return all conflicts.
+
+    For each source, checks whether a file or directory with the same name
+    already exists at the destination.  For directories, recurses into
+    children to find nested conflicts.  Returns an empty list when no
+    conflicts exist.
+    """
+    conflicts: list[ConflictInfo] = []
+    for source in sources:
+        _find_conflicts_recursive(source, dest_dir, conflicts)
+    return conflicts
+
+
+def _find_conflicts_recursive(
+    source: VfsPath, dest_dir: VfsPath, conflicts: list[ConflictInfo]
+) -> None:
+    """Recursively find conflicts for a single source (file or directory)."""
+    try:
+        src_st = source.fs.stat(source)
+    except OSError:
+        return
+
+    dest = dest_dir / source.name
+
+    try:
+        dest_st = dest.fs.stat(dest)
+    except OSError:
+        # Destination doesn't exist -- no conflict
+        if src_st.is_dir:
+            children = [e for e in source.fs.list_dir(source) if not e.is_parent]
+            for child in children:
+                _find_conflicts_recursive(child.path, dest_dir, conflicts)
+        return
+
+    # Both exist -- check type compatibility
+    if src_st.is_dir and dest_st.is_dir:
+        # Directory conflict -- recurse into children
+        src_children = [e for e in source.fs.list_dir(source) if not e.is_parent]
+        dest_children = [e for e in dest.fs.list_dir(dest) if not e.is_parent]
+        dest_names = {e.name for e in dest_children}
+        for child in src_children:
+            if child.name in dest_names:
+                _find_conflicts_recursive(child.path, dest, conflicts)
+            else:
+                _find_conflicts_recursive(child.path, dest, conflicts)
+    elif not src_st.is_dir and not dest_st.is_dir:
+        # File conflict
+        conflicts.append(
+            ConflictInfo(
+                source=source,
+                dest=dest,
+                source_size=src_st.size,
+                source_mtime=src_st.mtime,
+                dest_size=dest_st.size,
+                dest_mtime=dest_st.mtime,
+            )
+        )
+    # else: type mismatch (file vs dir) -- let the operation handle it
 
 
 # ---------------------------------------------------------------------------
@@ -159,16 +251,23 @@ def _stream_copy(
     total_size: int = 0,
     on_sub_progress: Callable[[int, int], None] | None = None,
 ) -> None:
-    """Copy one file from ``src`` into ``dest_dir`` using ``open_read``/``open_write``."""
+    """Copy one file from ``src`` into ``dest_dir`` using ``open_read``/``open_write``.
+
+    Preserves the source modification time on the destination if the backend
+    supports ``set_mtime``.
+    """
     dest = dest_dir / name
+    src_mtime = src.fs.stat(src).mtime
     bytes_written = 0
+    writable_dest = cast(WritableFileSystem, dest_dir.fs)
     with src.fs.open_read(src) as inp:
-        with dest_dir.fs.open_write(dest) as out:
+        with writable_dest.open_write(dest) as out:
             while chunk := inp.read(65536):
                 out.write(chunk)
                 if on_sub_progress:
                     bytes_written += len(chunk)
                     on_sub_progress(bytes_written, total_size)
+    writable_dest.set_mtime(dest, src_mtime)
 
 
 def _copy_file_with_progress(
@@ -208,11 +307,15 @@ def _stream_copy_tree(
     if should_cancel():
         raise _Cancelled()
     new_dir = dest_dir / src.name
-    dest_dir.fs.mkdir(new_dir)
+    writable = cast(WritableFileSystem, dest_dir.fs)
+    writable.mkdir(new_dir)
+    # Preserve directory mtime after copying children
+    src_dir_mtime = src.fs.stat(src).mtime
     children = [e for e in src.fs.list_dir(src) if not e.is_parent]
     if not children:
         counter[0] += 1
         call_progress(on_progress, counter[0], total, src.name)
+        writable.set_mtime(new_dir, src_dir_mtime)
         return
     for entry in children:
         if should_cancel():
@@ -221,6 +324,7 @@ def _stream_copy_tree(
             _stream_copy_tree(entry.path, new_dir, on_progress, should_cancel, counter, total)
         else:
             _copy_file_with_progress(entry.path, new_dir, counter, total, on_progress)
+    writable.set_mtime(new_dir, src_dir_mtime)
 
 
 # ---------------------------------------------------------------------------
@@ -252,14 +356,15 @@ def _delete_via_vfs(
     """
     if should_cancel():
         raise _Cancelled()
+    writable = cast(WritableFileSystem, entry.fs)
     st = entry.fs.stat(entry)
     if not st.is_dir:
-        entry.fs.delete(entry)
+        writable.delete(entry)
         counter[0] += 1
         call_progress(on_progress, counter[0], total, entry.name)
         return
     try:
-        entry.fs.delete(entry)
+        writable.delete(entry)
         counter[0] += entry_units
         call_progress(on_progress, counter[0], total, entry.name)
         return
@@ -267,7 +372,7 @@ def _delete_via_vfs(
         pass
     children = [e for e in entry.fs.list_dir(entry) if not e.is_parent]
     if not children:
-        entry.fs.delete(entry)
+        writable.delete(entry)
         counter[0] += 1
         call_progress(on_progress, counter[0], total, entry.name)
         return
@@ -275,7 +380,7 @@ def _delete_via_vfs(
         _delete_via_vfs(
             child.path, count_progress_units(child.path), on_progress, should_cancel, counter, total
         )
-    entry.fs.delete(entry)
+    writable.delete(entry)
 
 
 # ---------------------------------------------------------------------------
@@ -310,11 +415,12 @@ def resolve_dest_path(base: VfsPath, text: str) -> VfsPath:
 # ---------------------------------------------------------------------------
 
 
-def copy_entries(
+def _copy_entries(
     sources: list[VfsPath],
     dest_dir: VfsPath,
     on_progress: ProgressCallback | None = None,
     should_cancel: CancelPredicate | None = None,
+    conflict_resolutions: dict[int, ConflictResolution] | None = None,
 ) -> list[OperationError]:
     """Copy ``sources`` (files or directories) into ``dest_dir``.
 
@@ -325,11 +431,14 @@ def copy_entries(
 
     Returns a list of items that failed; stops early if ``should_cancel()``
     becomes true (checked between files, not just between top-level items).
+
+    ``conflict_resolutions`` maps conflict indices (from ``find_conflicts()``)
+    to the chosen resolution strategy for each conflicting file.
     """
     on_progress = on_progress or _noop_progress
     should_cancel = should_cancel or _never_cancel
 
-    if not dest_dir.fs.writable:
+    if not isinstance(dest_dir.fs, WritableFileSystem):
         msg = "Destination filesystem does not support writing"
         return [OperationError(s, msg) for s in sources]
     real_dest = dest_dir.fs.realpath(dest_dir)
@@ -384,11 +493,35 @@ def copy_entries(
     return errors
 
 
+def copy_entries(
+    sources: list[VfsPath],
+    dest_dir: VfsPath,
+    on_progress: ProgressCallback | None = None,
+    should_cancel: CancelPredicate | None = None,
+    conflict_resolutions: dict[int, ConflictResolution] | None = None,
+) -> list[OperationError]:
+    """Copy ``sources`` (files or directories) into ``dest_dir``.
+
+    Uses the shutil fast path when both source and destination are OS-backed.
+    Falls back to a chunk-level stream copy for cross-backend transfers (e.g.
+    extracting a member from a ZIP archive to a local directory, or
+    uploading to a remote backend).
+
+    Returns a list of items that failed; stops early if ``should_cancel()``
+    becomes true (checked between files, not just between top-level items).
+
+    ``conflict_resolutions`` maps conflict indices (from ``find_conflicts()``)
+    to the chosen resolution strategy for each conflicting file.
+    """
+    return _copy_entries(sources, dest_dir, on_progress, should_cancel, conflict_resolutions)
+
+
 def move_entries(
     sources: list[VfsPath],
     dest_dir: VfsPath,
     on_progress: ProgressCallback | None = None,
     should_cancel: CancelPredicate | None = None,
+    conflict_resolutions: dict[int, ConflictResolution] | None = None,
 ) -> list[OperationError]:
     """Move ``sources`` (files or directories) into ``dest_dir``.
 
@@ -403,7 +536,7 @@ def move_entries(
     on_progress = on_progress or _noop_progress
     should_cancel = should_cancel or _never_cancel
 
-    if not dest_dir.fs.writable:
+    if not isinstance(dest_dir.fs, WritableFileSystem):
         msg = "Destination filesystem does not support writing"
         return [OperationError(s, msg) for s in sources]
     real_dest = dest_dir.fs.realpath(dest_dir)
@@ -447,8 +580,8 @@ def move_entries(
                 else:
                     _copy_file_with_progress(source, dest_dir, counter, total, on_progress)
                 # Only delete the source if the backend supports writes
-                if source.fs.writable:
-                    source.fs.delete(source)
+                if isinstance(source.fs, WritableFileSystem):
+                    cast(WritableFileSystem, source.fs).delete(source)
         except _Cancelled:
             break
         except OSError as exc:
@@ -493,7 +626,7 @@ def delete_entries(
                 else:
                     real.unlink()
                 _catch_up_progress(counter, target, entry.name, total, on_progress)
-            elif entry.fs.writable:
+            elif isinstance(entry.fs, WritableFileSystem):
                 _delete_via_vfs(entry, entry_units, on_progress, should_cancel, counter, total)
             else:
                 raise OSError("Filesystem does not support deleting")
@@ -515,7 +648,7 @@ def make_directory(parent: VfsPath, name: str) -> VfsPath:
     if real is not None and real.exists():
         raise FileExistsError(f"'{name}' already exists in {parent}")
     try:
-        parent.fs.mkdir(target)
+        cast(WritableFileSystem, parent.fs).mkdir(target)
     except FileExistsError as err:
         raise FileExistsError(f"'{name}' already exists in {parent}") from err
     return target
@@ -531,7 +664,7 @@ def make_file(parent: VfsPath, name: str) -> VfsPath:
     if real is not None and real.exists():
         raise FileExistsError(f"'{name}' already exists in {parent}")
     try:
-        with parent.fs.open_write(target):
+        with cast(WritableFileSystem, parent.fs).open_write(target):
             pass
     except FileExistsError as err:
         raise FileExistsError(f"'{name}' already exists in {parent}") from err
@@ -547,5 +680,5 @@ def rename_entry(entry: VfsPath, new_name: str) -> VfsPath:
     real_target = entry.fs.realpath(target)
     if real_target is not None and real_target.exists():
         raise FileExistsError(f"'{new_name}' already exists in {entry.parent}")
-    entry.fs.rename(entry, target)
+    cast(WritableFileSystem, entry.fs).rename(entry, target)
     return target

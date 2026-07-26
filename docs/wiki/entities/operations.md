@@ -3,7 +3,9 @@ title: Operations — File Operations with Progress
 type: entity
 sources:
   - linux_commander/operations.py
+  - linux_commander/operations_controller.py
   - linux_commander/progress_dialog.py
+  - linux_commander/conflict_dialog.py
   - linux_commander/file_ops/__init__.py
   - linux_commander/file_ops/rename_op.py
   - linux_commander/file_ops/sync_op.py
@@ -15,17 +17,39 @@ related:
   - "[[panel]]"
   - "[[app]]"
   - "[[dialogs]]"
-  - "[[progress_dialog]]"
+  - "[[conflict_strategies]]"
   - "[[diff_viewer]]"
   - "[[checksums]]"
 created: 2026-07-17
-updated: 2026-07-18
+updated: 2026-07-22
 confidence: high
 ---
 
 # Operations — Copy/Move/Delete/Mkdir/Rename with Progress
 
 `linux_commander/operations.py` implements the core file operations (F5 Copy, F6 Move, F8 Delete, F7 Mkdir, F6 Rename) with **background threading**, **progress reporting**, and **error collection**.
+
+## SOLID Refactoring — OperationsController
+
+`linux_commander/operations_controller.py` provides `OperationsController` — extracted from `CommanderApp` (SRP):
+- Handles all file operations: copy, move, delete, mkdir, compress, new file, file info
+- Provides refresh helpers and error reporting
+- Composed with `CommanderApp` via dependency injection (callbacks for panel access, refresh, status updates)
+
+```python
+class OperationsController:
+    def __init__(self, parent, settings, local_fs, mount_manager,
+                 left_panel, right_panel, active_panel_getter,
+                 other_panel_getter, refresh_both_panels,
+                 report_errors, update_status) -> None: ...
+    def cmd_copy(self) -> None: ...
+    def cmd_move(self) -> None: ...
+    def cmd_delete(self) -> None: ...
+    def cmd_mkdir(self) -> None: ...
+    def cmd_compress(self) -> None: ...
+    def cmd_new_file(self) -> None: ...
+    def cmd_file_info(self) -> None: ...
+```
 
 ## Core Functions
 
@@ -61,6 +85,26 @@ Previously `delete_entries()` unconditionally required `entry.fs.realpath(entry)
 **Known, accepted limitation**: nothing here serializes two concurrent operations that happen to write to the same destination directory. Not fixed — matches how most simple file managers behave.
 
 Verified under Xvfb by directly checking `root.grab_current()` (Tk's actual grab-state query, not an indirect behavioral proxy) is `None` while a `ProgressDialog` is open, and by confirming a second `run_with_progress()` call completes while a first (deliberately slow) one is still in progress.
+
+## Conflict Resolution for Copy/Move (2026-07-22)
+
+Before a copy/move operation starts, `OperationsController._copy_or_move()` pre-scans all sources against the destination via `find_conflicts()` in `operations.py`. If conflicts are found, `conflict_dialog.resolve_conflicts()` shows a modal dialog listing all conflicting files with per-file resolution options:
+
+| Resolution | Behavior |
+|---|---|
+| **Replace** | Overwrite the existing file |
+| **Skip** | Don't copy/move this file |
+| **Replace if newer** | Only if source mtime > dest mtime |
+| **Replace if different size** | Only if source size != dest size |
+| **Compare** | Open diff viewer, then skip (non-destructive) |
+
+The dialog has an **Apply to All** checkbox that propagates the first file's choice to all remaining conflicts. After the user confirms, the controller resolves conflicts by dispatching to the [[conflict_strategies]] plugin system — each strategy's `should_delete()` method determines whether to delete the destination file before the operation proceeds.
+
+`ConflictInfo` (source/dest paths, sizes, mtimes) lives in `conflict_strategies/__init__.py`. The `ConflictResolution` enum lives in `operations.py`. The dialog lives in `conflict_dialog.py`.
+
+### SOLID Refactoring — Conflict Strategies Plugin System
+
+The hardcoded `if/elif` conflict resolution logic was extracted into the [[conflict_strategies]] plugin system (`linux_commander/conflict_strategies/`). Each strategy is a separate module exposing a `strategy_class` attribute. `OperationsController` dispatches via `get_strategy()` using `ConflictResolution.name.lower()` to match plugin names.
 
 ## Progress & Error Handling
 
@@ -144,7 +188,6 @@ Registered in Operations menu (only when at least one plugin exists). Built-ins:
 - [[panel]] — FilePanel provides tagged/cursor files, target directory
 - [[app]] — CommanderApp binds F5/F6/F7/F8 to operations
 - [[dialogs]] — confirm/prompt for delete/rename/mkdir
-- [[progress_dialog]] — ProgressDialog with cancel, used by all operations
 - [[archiving]] — compression dialog uses same progress pattern
 - [[diff_viewer]] — File compare viewer with side-by-side/unified diff
 - [[checksums]] — Checksum generation and verification operations

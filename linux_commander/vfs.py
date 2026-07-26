@@ -29,24 +29,22 @@ class StatResult:
 
 
 # ---------------------------------------------------------------------------
-# FileSystem abstract base class (forward-declared before VfsPath so the ABC
-# can be used as a type in VfsPath's field annotation; with
-# `from __future__ import annotations` all annotations are lazy strings, so
-# the ordering is fine).
+# FileSystem abstract base classes — split into Readable + Writable mixins
+# so that read-only backends (archives) aren't forced to inherit write methods
+# they can never implement (ISP).  The combined `FileSystem` class provides
+# backward compatibility for code that expects a single base.
 # ---------------------------------------------------------------------------
 
 
-class FileSystem(ABC):
-    """Abstract base for all VFS backends (local OS, zip, tar, FTP, …).
+class ReadableFileSystem(ABC):
+    """Abstract base for read-only VFS backends (archives, remote read-only).
 
     Subclasses must implement ``list_dir``, ``stat``, and ``open_read``.
-    Write operations default to raising ``OSError``; override in writable
-    backends.  ``display_prefix`` is prepended to the path string shown in
-    panel headers and window titles.
+    ``display_prefix`` is prepended to the path string shown in panel headers
+    and window titles.
     """
 
     display_prefix: str = ""
-    writable: bool = False
 
     @abstractmethod
     def list_dir(self, path: VfsPath) -> list[FileEntry]:
@@ -59,10 +57,10 @@ class FileSystem(ABC):
     def list_dir_flat(self, path: VfsPath) -> list[FileEntry]:
         """Return a flat list of all files under ``path`` recursively.
 
-        The default implementation raises ``NotImplementedError``.  Subclasses
-        that support flat view (e.g. LocalFileSystem) should override this.
+        The default implementation returns an empty list.  Subclasses that
+        support flat view (e.g. LocalFileSystem) should override this.
         """
-        raise NotImplementedError("Flat view not supported by this filesystem")
+        return []
 
     @abstractmethod
     def stat(self, path: VfsPath) -> StatResult:
@@ -92,24 +90,50 @@ class FileSystem(ABC):
             data = data[:max_bytes]
         return data, truncated
 
-    def open_write(self, path: VfsPath) -> BinaryIO:
-        """Open ``path`` for binary writing.  Raises ``OSError`` by default."""
-        raise OSError("Filesystem is read-only")
-
-    def mkdir(self, path: VfsPath) -> None:
-        """Create ``path`` as a new directory.  Raises ``OSError`` by default."""
-        raise OSError("Filesystem is read-only")
-
-    def delete(self, path: VfsPath) -> None:
-        """Delete ``path``.  Raises ``OSError`` by default."""
-        raise OSError("Filesystem is read-only")
-
-    def rename(self, src: VfsPath, dst: VfsPath) -> None:
-        """Rename ``src`` to ``dst``.  Raises ``OSError`` by default."""
-        raise OSError("Filesystem is read-only")
-
     def close(self) -> None:  # noqa: B027
         """Release held resources (open handles, temp files).  No-op by default."""
+
+
+class WritableFileSystem(ABC):
+    """Abstract base for writable VFS backends (local disk, network shares).
+
+    Subclasses must implement ``open_write``, ``mkdir``, ``delete``, and
+    ``rename``.  Combine with ``ReadableFileSystem`` for a full-featured
+    backend.
+    """
+
+    @abstractmethod
+    def open_write(self, path: VfsPath) -> BinaryIO:
+        """Open ``path`` for binary writing."""
+
+    @abstractmethod
+    def mkdir(self, path: VfsPath) -> None:
+        """Create ``path`` as a new directory."""
+
+    @abstractmethod
+    def delete(self, path: VfsPath) -> None:
+        """Delete ``path``."""
+
+    @abstractmethod
+    def rename(self, src: VfsPath, dst: VfsPath) -> None:
+        """Rename ``src`` to ``dst``."""
+
+    def set_mtime(self, path: VfsPath, mtime: float) -> None:  # noqa: B027
+        """Set the modification time of ``path`` to ``mtime`` (epoch seconds).
+
+        No-op by default.  Writable backends that support preserving timestamps
+        (SFTP, SMB, WebDAV, local disk) should override this.
+        """
+        pass
+
+
+class FileSystem(ReadableFileSystem, WritableFileSystem):
+    """Combined abstract base for full-featured VFS backends.
+
+    Inherits both read and write capabilities.  Use this for backends that
+    support both operations (e.g. LocalFileSystem, SFTP, SMB).  For
+    read-only backends (archives), inherit ``ReadableFileSystem`` directly.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +155,7 @@ class VfsPath:
     ``panel.marked: set[VfsPath]`` correctness across re-listings.
     """
 
-    fs: FileSystem
+    fs: ReadableFileSystem
     parts: tuple[str, ...]
 
     # -- path-like properties -------------------------------------------------
@@ -362,6 +386,13 @@ class LocalFileSystem(FileSystem):
     def rename(self, src: VfsPath, dst: VfsPath) -> None:
         self._to_path(src).rename(self._to_path(dst))
 
+    def set_mtime(self, path: VfsPath, mtime: float) -> None:
+        real = self._to_path(path)
+        try:
+            os.utime(real, (mtime, mtime))
+        except OSError:
+            pass
+
     def close(self) -> None:
         pass  # the host OS filesystem has no resources to release
 
@@ -382,13 +413,13 @@ class MountManager:
 
     def __init__(self) -> None:
         # host_path → (fs, refcount)  — for extension mounts (zip, tar)
-        self._mounts: dict[VfsPath, tuple[FileSystem, int]] = {}
+        self._mounts: dict[VfsPath, tuple[ReadableFileSystem, int]] = {}
         # id(fs) → host_path  (reverse lookup for resolve_up / release)
         self._fs_to_host: dict[int, VfsPath] = {}
         # id(fs) → (fs, refcount)  — for scheme mounts (ftp, …) with no host path
-        self._scheme_fses: dict[int, tuple[FileSystem, int]] = {}
+        self._scheme_fses: dict[int, tuple[ReadableFileSystem, int]] = {}
 
-    def mount_scheme_fs(self, fs: FileSystem) -> VfsPath:
+    def mount_scheme_fs(self, fs: ReadableFileSystem) -> VfsPath:
         """Register a scheme-based FS (FTP, SFTP, …) and return its root.
 
         Unlike ``enter()``, scheme FSes have no host path in ``_fs_to_host``:
@@ -446,7 +477,7 @@ class MountManager:
             return path, ""
         return path.parent, path.name
 
-    def release(self, fs: FileSystem) -> None:
+    def release(self, fs: ReadableFileSystem) -> None:
         """Decrement the refcount for ``fs``; close and remove at zero."""
         key = id(fs)
         # Scheme mounts (FTP, …) are tracked separately.
@@ -478,7 +509,7 @@ class MountManager:
         else:
             self._mounts[host_path] = (fs_obj, count - 1)
 
-    def release_if_leaving(self, old_fs: FileSystem, new_fs: FileSystem) -> None:
+    def release_if_leaving(self, old_fs: ReadableFileSystem, new_fs: ReadableFileSystem) -> None:
         """Release ``old_fs`` unless ``new_fs`` is mounted *on top of* ``old_fs``.
 
         This prevents premature close when a panel enters a nested archive

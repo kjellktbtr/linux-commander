@@ -37,7 +37,8 @@ from types import ModuleType
 from typing import Literal
 
 from linux_commander.settings import StoredKey
-from linux_commander.vfs import FileSystem, VfsPath
+from linux_commander.vfs import FileSystem as FileSystem
+from linux_commander.vfs import ReadableFileSystem, VfsPath
 
 
 @dataclass
@@ -130,7 +131,7 @@ def get_credential_provider() -> CredentialProvider | None:
     return _credential_provider
 
 
-def materialize(host_fs: FileSystem, path: VfsPath) -> Path:
+def materialize(host_fs: ReadableFileSystem, path: VfsPath) -> Path:
     """Return a real OS ``Path`` for ``path``.
 
     If the backend exposes a real file via ``realpath()``, use it directly.

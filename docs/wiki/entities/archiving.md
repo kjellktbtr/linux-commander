@@ -4,15 +4,19 @@ type: entity
 sources:
   - linux_commander/archiving.py
   - linux_commander/compression_dialog.py
+  - linux_commander/codecs/__init__.py
+  - linux_commander/containers/__init__.py
   - CONTRIBUTING.md
 related:
   - "[[vfs]]"
   - "[[plugins]]"
+  - "[[codecs]]"
+  - "[[containers]]"
   - "[[operations]]"
   - "[[compression_dialog]]"
   - "[[settings]]"
 created: 2026-07-17
-updated: 2026-07-18
+updated: 2026-07-22
 confidence: high
 ---
 
@@ -58,6 +62,14 @@ Credential modes (must match on decrypt):
 - **Stored key** — named 256-bit key from config; salt used as AAD
 
 All three paths (Operations menu Encrypt/Decrypt, compression dialog, Enter on `.crp`) produce **byte-identical** `.crp` files.
+
+## SOLID Refactoring — Codecs Plugin System
+
+Compression codecs were extracted from `archiving.py` into the [[codecs]] plugin system (`linux_commander/codecs/`). The `_wrap_codec()` function now delegates to `codecs.compress_file()` instead of using hardcoded `if/elif` branches for gzip, bz2, lzma, and zstd. The stdlib imports (`bz2`, `gzip`, `lzma`, `shutil`) were removed from `archiving.py` after this refactor.
+
+## SOLID Refactoring — Containers Plugin System
+
+Archive container builders were extracted from `archiving.py` into the [[containers]] plugin system (`linux_commander/containers/`). The 5 hardcoded builder functions (`_build_zip`, `_build_tar`, `_build_7z`, `_build_iso`, `_create_grp_archive`) were replaced with auto-discovered plugins. `CONTAINERS` and `CONTAINER_EXTENSIONS` are now derived from `discover_containers()`. `compress_sources()` calls `get_container(name).build()` instead of dispatching through a hardcoded dict. `archiving.py` reduced from ~640 to ~390 lines.
 
 ## Core Functions
 

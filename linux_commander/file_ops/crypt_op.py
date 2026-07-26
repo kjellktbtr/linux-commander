@@ -14,13 +14,13 @@ import os
 import tkinter as tk
 from collections.abc import Callable
 from tkinter import ttk
-from typing import Any
+from typing import Any, cast
 
 from linux_commander.dialogs import _center_over, confirm, error, prompt
 from linux_commander.file_ops import FileOperation
 from linux_commander.operations import CancelPredicate, OperationError, ProgressCallback
 from linux_commander.settings import StoredKey
-from linux_commander.vfs import VfsPath
+from linux_commander.vfs import VfsPath, WritableFileSystem
 
 # ── crypto guard ──────────────────────────────────────────────────────────
 
@@ -103,7 +103,7 @@ def _encrypt_file(
     if key is not None:
         raw_key = key.to_bytes()
         blob = _encrypt_bytes(raw_key, plaintext)
-        with dest.fs.open_write(dest) as out:
+        with cast(WritableFileSystem, dest.fs).open_write(dest) as out:
             out.write(blob)
         return
 
@@ -114,7 +114,7 @@ def _encrypt_file(
     cipher = _CipherClass(raw_key)
     ciphertext = cipher.encrypt(nonce, plaintext, None)
     blob = MAGIC + salt + nonce + ciphertext
-    with dest.fs.open_write(dest) as out:
+    with cast(WritableFileSystem, dest.fs).open_write(dest) as out:
         out.write(blob)
 
 
@@ -141,7 +141,7 @@ def _decrypt_file(
     if key is not None:
         raw_key = key.to_bytes()
         plaintext = _decrypt_bytes(raw_key, blob)
-        with dest.fs.open_write(dest) as out:
+        with cast(WritableFileSystem, dest.fs).open_write(dest) as out:
             out.write(plaintext)
         return
 
@@ -156,7 +156,7 @@ def _decrypt_file(
     raw_key = _derive_key(password, salt)
     cipher = _CipherClass(raw_key)
     plaintext = cipher.decrypt(nonce, ciphertext, None)
-    with dest.fs.open_write(dest) as out:
+    with cast(WritableFileSystem, dest.fs).open_write(dest) as out:
         out.write(plaintext)
 
 

@@ -13,13 +13,6 @@ from linux_commander import dialogs, viewer, volumes
 from linux_commander.fs import SortKey, format_mtime, format_size, sort_entries, split_extension
 from linux_commander.vfs import FileEntry, LocalFileSystem, MountManager, VfsPath
 
-_SORT_LABELS: dict[SortKey, str] = {
-    "name": "Name",
-    "size": "Size",
-    "mtime": "Date",
-    "extension": "Ext",
-}
-
 PAGE_SIZE = 10
 """Number of rows PgUp/PgDn moves by. A fixed value is simple and good enough
 for v1; a future refinement could compute it from the Treeview's rendered
@@ -518,83 +511,28 @@ class FilePanel(ttk.Frame):
         navigation history (used by go_back/go_forward). Internal navigation
         (back/forward) should pass False to avoid duplicate entries.
         """
+        from linux_commander.panel_loading import (
+            list_and_sort,
+            populate_tree,
+            post_load_housekeeping,
+        )
+
         old_fs = self.current_path.fs
-        try:
-            if self.flat_view:
-                raw = path.fs.list_dir_flat(path)
-            else:
-                raw = path.fs.list_dir(path)
-        except OSError as exc:
-            self._report_error(f"Could not open '{path}':\n{exc}")
+        entries = list_and_sort(self, path)
+        if entries is None:
             return
-        if not self.show_hidden:
-            raw = [e for e in raw if e.is_parent or not e.name.startswith(".")]
-        entries = sort_entries(raw, key=self.sort_key, reverse=self.sort_reverse)
 
-        self._tree.delete(*self._tree.get_children())
         self._entries = entries
-        self.current_path = path
-        self._update_header()
-        if old_fs is not path.fs:
-            self._mount_manager.release_if_leaving(old_fs, path.fs)
-        if self.marked:
-            self.marked = set()
-            self._notify_marks_changed()
-
-        if add_to_history:
-            self._add_to_history(path)
-
-        # Resolve icons lazily (None when PIL unavailable or icons disabled)
-        if self.show_icons:
-            try:
-                from linux_commander import icons as _icons
-
-                _icon_fn = _icons.icon_for_entry
-            except Exception:
-                _icon_fn = None
-        else:
-            _icon_fn = None
-
-        for index, entry in enumerate(entries):
-            # Leading space when icons are shown: creates a gap between the
-            # 16-px icon and the first character of the name column text.
-            _pfx = " " if _icon_fn is not None else ""
-            # Strip extension from name column when extension column is visible
-            show_ext_col = "extension" in self._visible_columns_list
-            if entry.is_dir:
-                display_name = f"{_pfx}[{entry.name}]"
-                ext_text = ""
-            elif show_ext_col:
-                # Split name and extension
-                name_part, ext_part = self._split_name_ext(entry.name)
-                display_name = f"{_pfx}{name_part}"
-                ext_text = ext_part
-            else:
-                display_name = f"{_pfx}{entry.name}"
-                ext_text = split_extension(entry.name)
-            size_text = "<DIR>" if entry.is_dir else format_size(entry.size)
-            mtime_text = format_mtime(entry.mtime)
-            icon = _icon_fn(entry) if _icon_fn is not None else None
-            kw: dict = dict(
-                parent="",
-                index="end",
-                iid=str(index),
-                values=(display_name, ext_text, size_text, mtime_text),
-            )
-            if icon is not None:
-                kw["image"] = icon
-            self._tree.insert(**kw)
-
-        target_index = self._default_cursor_index(select_name, select_parent)
-        if target_index is not None:
-            self._select_index(target_index)
-
-        if self._on_directory_changed is not None:
-            self._on_directory_changed()
+        populate_tree(self, entries)
+        post_load_housekeeping(self, old_fs, path, select_name, select_parent, add_to_history)
 
     def _update_header(self) -> None:
         arrow = "v" if self.sort_reverse else "^"
-        self._path_var.set(f"{self.current_path}   [{_SORT_LABELS[self.sort_key]} {arrow}]")
+        from linux_commander.sort_criteria import get_criterion
+
+        criterion = get_criterion(self.sort_key)
+        label = criterion.label if criterion is not None else self.sort_key
+        self._path_var.set(f"{self.current_path}   [{label} {arrow}]")
 
     def _report_error(self, message: str) -> None:
         if self._on_error is not None:
@@ -632,26 +570,6 @@ class FilePanel(ttk.Frame):
         """Toggle whether dotfiles are shown, then reload."""
         self.show_hidden = not self.show_hidden
         self.load(self.current_path)
-
-    def _default_cursor_index(
-        self, select_name: str | None, select_parent: bool = False
-    ) -> int | None:
-        if select_name is not None:
-            for index, entry in enumerate(self._entries):
-                if entry.name == select_name and not entry.is_parent:
-                    return index
-        if select_parent:
-            # Place cursor on ".." so a second Enter returns to the parent
-            for index, entry in enumerate(self._entries):
-                if entry.is_parent:
-                    return index
-        for index, entry in enumerate(self._entries):
-            if not entry.is_parent:
-                return index
-        for index, entry in enumerate(self._entries):
-            if entry.is_parent:
-                return index
-        return None
 
     # -- cursor navigation ---------------------------------------------------
 

@@ -145,15 +145,11 @@ def test_ar_flat_archive_has_no_directories(tmp_path: Path) -> None:
 
 
 def test_libarchive_fs_is_read_only(tmp_path: Path) -> None:
+    from linux_commander.vfs import WritableFileSystem
+
     archive_path = _make_iso(tmp_path / "test.iso")
     fs = LibArchiveFileSystem(archive_path, _local_vpath(archive_path))
-    assert fs.writable is False
-    with pytest.raises(OSError):
-        fs.open_write(VfsPath(fs=fs, parts=("", "new.txt")))
-    with pytest.raises(OSError):
-        fs.mkdir(VfsPath(fs=fs, parts=("", "newdir")))
-    with pytest.raises(OSError):
-        fs.delete(VfsPath(fs=fs, parts=("", "a.txt")))
+    assert not isinstance(fs, WritableFileSystem)
 
 
 def test_libarchive_fs_realpath_is_none(tmp_path: Path) -> None:

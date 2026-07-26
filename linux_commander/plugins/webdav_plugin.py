@@ -319,6 +319,16 @@ class WebDAVFileSystem(FileSystem):
         except WebDavException as exc:
             raise OSError(f"Cannot rename '{src_path}' to '{dst_path}': {exc}") from exc
 
+    def set_mtime(self, path: VfsPath, mtime: float) -> None:
+        import datetime
+
+        remote_path = self._to_remote_path(path)
+        try:
+            dt = datetime.datetime.fromtimestamp(mtime)
+            self._client.set_properties(remote_path, {"lastmod": dt})
+        except (WebDavException, OSError):
+            pass
+
     def close(self) -> None:
         # webdav3 client doesn't have explicit close; connections are per-request
         pass

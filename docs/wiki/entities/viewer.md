@@ -3,6 +3,7 @@ title: viewer — Unified TextWindow (F3 viewer + F4 editor)
 type: entity
 sources:
   - linux_commander/viewer.py
+  - linux_commander/view_modes.py
 related:
   - "[[app]]"
   - "[[panel]]"
@@ -10,7 +11,7 @@ related:
   - "[[readme-summary]]"
   - "[[syntax]]"
 created: 2026-07-14
-updated: 2026-07-18
+updated: 2026-07-22
 confidence: high
 ---
 
@@ -22,6 +23,21 @@ A single `TextWindow` class drives both the F3 read-only viewer and the F4
 editor.  F3 opens read-only; F4 opens editable; pressing F4 inside a read-only
 window promotes it to edit mode in place.  The image viewer (`view_image`) is a
 separate, standalone function.
+
+## SOLID Refactoring — ViewMode Strategy
+
+`linux_commander/view_modes.py` provides the `ViewMode(ABC)` base class and concrete implementations (`CsvMode`, `HexMode`, `StringsMode`, `JsonMode`). Each mode encapsulates its own rendering logic, toggle behavior, and whether it blocks editing. Composed with `TextWindow` rather than inheriting from it.
+
+```python
+class ViewMode(ABC):
+    name: str
+    @property
+    def is_active(self) -> bool: ...
+    def toggle(self, window: object) -> None: ...
+    def render(self, window: object) -> None: ...
+    @property
+    def blocks_edit(self) -> bool: ...
+```
 
 ## Public API
 

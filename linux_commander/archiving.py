@@ -26,25 +26,14 @@ Public API:
 
 from __future__ import annotations
 
-import bz2
-import gzip
-import io
-import lzma
 import os
 import pathlib
-import shutil
-import tarfile
 import tempfile
-import zipfile
 from collections.abc import Callable
+from typing import cast
 
-from linux_commander.grp_names import (
-    GRP_COUNT,
-    GRP_ENTRY,
-    GRP_MAGIC,
-    GRP_MAX_NAME_LEN,
-    make_grp_name,
-)
+from linux_commander.codecs import discover_codecs
+from linux_commander.containers import discover_containers, get_container
 from linux_commander.operations import (
     CancelPredicate,
     OperationError,
@@ -52,40 +41,8 @@ from linux_commander.operations import (
     call_progress,
     count_progress_units,
 )
-from linux_commander.vfs import FileSystem, VfsPath
+from linux_commander.vfs import FileSystem, VfsPath, WritableFileSystem
 
-try:
-    import compression.zstd as _zstd_mod  # type: ignore[import-not-found]
-
-    _HAS_ZSTD = True
-except ImportError:
-    _zstd_mod = None  # type: ignore[assignment]
-    _HAS_ZSTD = False
-
-try:
-    import py7zr as _py7zr_mod
-
-    _HAS_PY7ZR = True
-except ImportError:
-    _py7zr_mod = None  # type: ignore[assignment]
-    _HAS_PY7ZR = False
-
-try:
-    import libarchive as _libarchive_mod  # type: ignore[import-untyped]
-
-    _HAS_LIBARCHIVE = True
-except ImportError:
-    _libarchive_mod = None  # type: ignore[assignment]
-    _HAS_LIBARCHIVE = False
-
-
-CONTAINER_EXTENSIONS: dict[str, str] = {
-    "zip": ".zip",
-    "tar": ".tar",
-    "grp": ".grp",
-    "7z": ".7z",
-    "iso": ".iso",
-}
 CODEC_EXTENSIONS: dict[str, str] = {
     "none": "",
     "gz": ".gz",
@@ -94,10 +51,18 @@ CODEC_EXTENSIONS: dict[str, str] = {
     "zst": ".zst",
 }
 
-CONTAINERS: tuple[str, ...] = (
-    ("zip", "tar", "grp") + (("7z",) if _HAS_PY7ZR else ()) + (("iso",) if _HAS_LIBARCHIVE else ())
-)
-CODECS: tuple[str, ...] = ("none", "gz", "bz2", "xz") + (("zst",) if _HAS_ZSTD else ())
+
+def _build_containers() -> tuple[str, ...]:
+    return tuple(c.name for c in discover_containers().values())
+
+
+def _build_container_extensions() -> dict[str, str]:
+    return {c.name: c.extension for c in discover_containers().values()}
+
+
+CONTAINERS = _build_containers()
+CONTAINER_EXTENSIONS = _build_container_extensions()
+CODECS = tuple(c.name for c in discover_codecs().values())
 
 _FUSED_FMT_MAP: dict[str, tuple[str, str]] = {
     "zip": ("zip", "none"),
@@ -131,6 +96,9 @@ def _split_fmt(fmt: str) -> tuple[str, str]:
         return _FUSED_FMT_MAP[fmt]
     except KeyError:
         raise ValueError(f"Unknown archive format: {fmt!r}") from None
+
+
+# Lazy import of _iter_sources to avoid circular imports at module load time
 
 
 def _iter_vfs(path: VfsPath) -> list[tuple[VfsPath, str]]:
@@ -247,228 +215,6 @@ def _iter_sources(
     return errors
 
 
-def _build_zip(
-    sources: list[VfsPath],
-    dest: pathlib.Path,
-    local_fs: FileSystem,
-    on_progress: ProgressCallback,
-    should_cancel: CancelPredicate,
-) -> list[OperationError]:
-    with zipfile.ZipFile(dest, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-
-        def add_local_file(path: pathlib.Path, arcname: str) -> None:
-            zf.write(path, arcname)
-
-        def add_local_dir(path: pathlib.Path, _arcname: str) -> None:
-            parent = path.parent
-            for root, _dirs, files in os.walk(path):
-                for fname in files:
-                    fpath = pathlib.Path(root) / fname
-                    zf.write(fpath, str(fpath.relative_to(parent)))
-
-        def add_bytes(arcname: str, data: bytes) -> None:
-            zf.writestr(arcname, data)
-
-        return _iter_sources(
-            sources, local_fs, should_cancel, on_progress, add_local_file, add_local_dir, add_bytes
-        )
-
-
-def _build_tar(
-    sources: list[VfsPath],
-    dest: pathlib.Path,
-    local_fs: FileSystem,
-    on_progress: ProgressCallback,
-    should_cancel: CancelPredicate,
-) -> list[OperationError]:
-    with tarfile.open(dest, "w") as tf:
-
-        def add_local_file(path: pathlib.Path, arcname: str) -> None:
-            tf.add(path, arcname=arcname)
-
-        def add_local_dir(path: pathlib.Path, arcname: str) -> None:
-            tf.add(path, arcname=arcname)  # tarfile recurses directories itself
-
-        def add_bytes(arcname: str, data: bytes) -> None:
-            ti = tarfile.TarInfo(name=arcname)
-            ti.size = len(data)
-            tf.addfile(ti, io.BytesIO(data))
-
-        return _iter_sources(
-            sources, local_fs, should_cancel, on_progress, add_local_file, add_local_dir, add_bytes
-        )
-
-
-def _build_7z(
-    sources: list[VfsPath],
-    dest: pathlib.Path,
-    local_fs: FileSystem,
-    on_progress: ProgressCallback,
-    should_cancel: CancelPredicate,
-) -> list[OperationError]:
-    if _py7zr_mod is None:
-        first = sources[0] if sources else None
-        return [OperationError(first, "py7zr package is not installed")] if first else []  # type: ignore[list-item]
-
-    with _py7zr_mod.SevenZipFile(dest, "w") as zf:
-
-        def add_local_file(path: pathlib.Path, arcname: str) -> None:
-            zf.write(path, arcname)
-
-        def add_local_dir(path: pathlib.Path, _arcname: str) -> None:
-            parent = path.parent
-            for root, _dirs, files in os.walk(path):
-                for fname in files:
-                    fpath = pathlib.Path(root) / fname
-                    zf.write(fpath, str(fpath.relative_to(parent)))
-
-        def add_bytes(arcname: str, data: bytes) -> None:
-            zf.writestr(data, arcname)
-
-        return _iter_sources(
-            sources, local_fs, should_cancel, on_progress, add_local_file, add_local_dir, add_bytes
-        )
-
-
-def _build_iso(
-    sources: list[VfsPath],
-    dest: pathlib.Path,
-    local_fs: FileSystem,
-    on_progress: ProgressCallback,
-    should_cancel: CancelPredicate,
-) -> list[OperationError]:
-    if _libarchive_mod is None:
-        first = sources[0] if sources else None
-        return [OperationError(first, "libarchive-c package is not installed")] if first else []  # type: ignore[list-item]
-
-    with _libarchive_mod.file_writer(str(dest), "iso9660") as archive:
-
-        def add_local_file(path: pathlib.Path, arcname: str) -> None:
-            archive.add_files(str(path), pathname=arcname, recursive=False)
-
-        def add_local_dir(path: pathlib.Path, arcname: str) -> None:
-            # libarchive's add_files recurses and renames entries relative to
-            # `pathname` itself, so no manual os.walk is needed here (unlike
-            # the zip/7z builders above).
-            archive.add_files(str(path), pathname=arcname, recursive=True)
-
-        def add_bytes(arcname: str, data: bytes) -> None:
-            archive.add_file_from_memory(arcname, len(data), data)
-
-        return _iter_sources(
-            sources, local_fs, should_cancel, on_progress, add_local_file, add_local_dir, add_bytes
-        )
-
-
-def _create_grp_archive(
-    sources: list[VfsPath],
-    archive_path: pathlib.Path,
-    local_fs: FileSystem,
-    on_progress: ProgressCallback,
-    should_cancel: CancelPredicate,
-) -> list[OperationError]:
-    """Create a GRP archive from sources.
-
-    GRP is a flat archive format with 12-byte filename limit (8.3 convention).
-    Files with longer names are truncated with ~1, ~2 suffixes for collisions.
-    A mapping file (__GRPMAP.J) stores original names if any were modified.
-    Relative paths are preserved using '/' as separator within the 12-byte limit.
-    """
-    import json
-    from collections import defaultdict
-
-    # Collect all files to include (flatten directories), via the same
-    # local-real-path/remote-VFS split the other builders use -- using
-    # _iter_vfs directly here would drop the top-level directory name for
-    # local sources (it assumes remote-flatten semantics), silently losing
-    # the "sub/" in "sub/file.txt".
-    all_files: list[tuple[str, bytes]] = []  # (arcname, data)
-
-    def add_local_file(path: pathlib.Path, arcname: str) -> None:
-        all_files.append((arcname, path.read_bytes()))
-
-    def add_local_dir(path: pathlib.Path, _arcname: str) -> None:
-        parent = path.parent
-        for root, _dirs, files in os.walk(path):
-            for fname in files:
-                fpath = pathlib.Path(root) / fname
-                all_files.append((str(fpath.relative_to(parent)), fpath.read_bytes()))
-
-    def add_bytes(arcname: str, data: bytes) -> None:
-        all_files.append((arcname, data))
-
-    errors = _iter_sources(
-        sources, local_fs, should_cancel, on_progress, add_local_file, add_local_dir, add_bytes
-    )
-    if errors:
-        return errors
-
-    # Generate GRP-compliant names (12 chars max, handle collisions)
-    # Base name: first 8 chars of stem, then ~N, then extension (max 3 chars)
-    name_counts: dict[str, int] = defaultdict(int)
-    grp_entries: list[tuple[str, bytes]] = []  # (grp_name, data)
-    name_mapping: dict[str, str] = {}  # grp_name -> original_name
-
-    for orig_name, data in all_files:
-        if should_cancel():
-            first = sources[0] if sources else None
-            if first is not None:
-                errors.append(OperationError(first, "Cancelled by user"))
-            break
-
-        grp_name = make_grp_name(orig_name, name_counts)
-
-        # Track mapping if name was modified
-        if grp_name != orig_name:
-            name_mapping[grp_name] = orig_name
-
-        grp_entries.append((grp_name, data))
-        call_progress(
-            on_progress, len(grp_entries), len(all_files), f"Packing {grp_name}", None, None
-        )
-
-    if errors:
-        return errors
-
-    # If any names were modified, add mapping file
-    if name_mapping:
-        mapping_json = json.dumps(name_mapping, ensure_ascii=False).encode("utf-8")
-        mapping_name = "__GRPMAP.J"  # 12 chars max for GRP
-        grp_entries.append((mapping_name, mapping_json))
-
-    # Build GRP archive
-    parts: list[bytes] = [GRP_MAGIC, GRP_COUNT.pack(len(grp_entries))]
-
-    # Directory entries
-    for name, data in grp_entries:
-        encoded = name.encode("ascii", errors="replace").ljust(GRP_MAX_NAME_LEN, b"\x00")[
-            :GRP_MAX_NAME_LEN
-        ]
-        parts.append(GRP_ENTRY.pack(encoded, len(data)))
-
-    # File data
-    for _, data in grp_entries:
-        parts.append(data)
-
-    archive_path.write_bytes(b"".join(parts))
-    return errors
-
-
-_CONTAINER_BUILDERS: dict[
-    str,
-    Callable[
-        [list[VfsPath], pathlib.Path, FileSystem, ProgressCallback, CancelPredicate],
-        list[OperationError],
-    ],
-] = {
-    "zip": _build_zip,
-    "tar": _build_tar,
-    "grp": _create_grp_archive,
-    "7z": _build_7z,
-    "iso": _build_iso,
-}
-
-
 def _wrap_codec(
     container_path: pathlib.Path, dest_path: pathlib.Path, codec: str, level: int
 ) -> None:
@@ -477,30 +223,9 @@ def _wrap_codec(
     ``codec == "none"`` just moves the file into place unchanged. Deletes
     ``container_path`` in all cases (it is always a private temp file).
     """
-    if codec == "none":
-        os.replace(container_path, dest_path)
-        return
-    if codec not in ("gz", "bz2", "xz") and not (codec == "zst" and _HAS_ZSTD):
-        raise ValueError(f"Unsupported compression codec: {codec!r}")
+    from linux_commander.codecs import compress_file
 
-    try:
-        with open(container_path, "rb") as src:
-            if codec == "gz":
-                with gzip.open(dest_path, "wb", compresslevel=max(0, min(level, 9))) as out:
-                    shutil.copyfileobj(src, out)
-            elif codec == "bz2":
-                with bz2.open(dest_path, "wb", compresslevel=max(1, min(level, 9))) as out:
-                    shutil.copyfileobj(src, out)
-            elif codec == "xz":
-                with lzma.open(dest_path, "wb", preset=max(0, min(level, 9))) as out:
-                    shutil.copyfileobj(src, out)
-            else:  # codec == "zst"
-                with _zstd_mod.open(  # type: ignore[union-attr]
-                    dest_path, "wb", level=max(1, min(level, 22))
-                ) as out:
-                    shutil.copyfileobj(src, out)
-    finally:
-        os.unlink(container_path)
+    compress_file(container_path, dest_path, codec, level)
 
 
 def _wrap_crypt(
@@ -589,7 +314,7 @@ def compress_sources(
     # local temp file and stream it up to the destination afterward.
     tmp_path: str | None = None
     if real_archive is None:
-        if not archive_path.fs.writable:
+        if not isinstance(archive_path.fs, WritableFileSystem):
             return [
                 OperationError(  # type: ignore[list-item]
                     archive_path, "Destination filesystem does not support writing"
@@ -617,10 +342,10 @@ def compress_sources(
         codec_tmp_path = pathlib.Path(codec_name)
 
     try:
-        builder = _CONTAINER_BUILDERS.get(container)
-        if builder is None:
+        ctr = get_container(container)
+        if ctr is None:
             raise ValueError(f"Unknown container format: {container!r}")
-        errors = builder(sources, build_path, local_fs, on_progress, should_cancel)
+        errors = ctr.build(sources, build_path, local_fs, on_progress, should_cancel)
         if not errors:
             if encrypted:
                 assert codec_tmp_path is not None
@@ -648,7 +373,7 @@ def compress_sources(
     if tmp_path is not None and not errors:
         try:
             with open(real_archive, "rb") as f_in:
-                with archive_path.fs.open_write(archive_path) as f_out:
+                with cast(WritableFileSystem, archive_path.fs).open_write(archive_path) as f_out:
                     while chunk := f_in.read(65536):
                         f_out.write(chunk)
         except OSError as exc:
